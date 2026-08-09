@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "lib",
+    "emergency_session",
+    "ai_session",
+    "tax_session",
+    "identity_session",
+]
+default-member = "lib"

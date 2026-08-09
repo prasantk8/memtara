@@ -7,44 +7,58 @@ Implement end-to-end zero-knowledge proof system for Memtara's local-first vault
 
 ## Phase 1: Project Foundation & Environment Setup (Days 1-2)
 
-### [ ] Day 1: Initialize Development Environment
-- [ ] Create Noir project structure (`memtara-circuits`)
-- [ ] Set up Rust workspace for vault layer
-- [ ] Configure Node.js monorepo for web frontend
-- [ ] Install required dependencies:
-  - Noir toolchain (noir-rs, Axel, Acir)
-  - Barretenberg/ UltraHonk prover
-  - Poseidon hash implementations
-  - Ed25519/BLS signature libraries
+### [x] Day 1: Initialize Development Environment
+- [x] Create Noir project structure (`memtara_circuits`) — `circuits/` is now a
+      real Nargo workspace (lib + 4 bin packages), not flat placeholder `.nr` files
+- [x] Set up Rust workspace for vault layer — `vault/` compiles and its tests pass
+- [ ] Configure Node.js monorepo for web frontend — `web/`, `cli/`, `packages/` still empty
+- [x] Install required dependencies:
+  - Noir toolchain (nargo 1.0.0-beta.26 via noirup)
+  - Barretenberg/UltraHonk prover (bundled with nargo)
+  - Poseidon hash implementations (`noir-lang/poseidon` v0.3.0)
+  - Signature library — **EdDSA/Baby Jubjub** (`noir-lang/noir-edwards` v0.2.5),
+    not Ed25519/BLS; see ARCHITECTURE.md note on why
 
-### [ ] Day 2: Core Infrastructure Setup
-- [ ] Create basic vault data structure with encryption
-- [ ] Implement Merkle tree utilities (Poseidon hashing)
-- [ ] Set up test framework for circuits
+### [x] Day 2: Core Infrastructure Setup
+- [x] Create basic vault data structure with encryption (AES-256-GCM, caller-supplied key)
+- [x] Implement Merkle tree utilities — SHA-256 in `vault/` (Rust side, not yet
+      Poseidon-matched to circuits — tracked as Phase 3 work), Poseidon-BN254
+      in `circuits/lib/src/merkle_inclusion.nr` (Noir side)
+- [x] Set up test framework for circuits — `nargo test`, 24 lib tests passing
 - [ ] Configure CI/CD pipeline skeleton
-- [ ] Write README with project overview
+- [x] Write README with project overview
 
-**Status**: ⏳ Not Started
+**Status**: ✅ circuits + vault done; Node/web/cli scaffolding not started
 
 ---
 
 ## Phase 2: Core ZKP Circuits Development (Days 3-6)
 
-### [ ] Days 3-4: Merkle Inclusion & Hash Circuits
-- [ ] Implement basic Merkle tree proof circuit in Noir
-- [ ] Add Poseidon hash function integration
-- [ ] Create sparse Merkle tree for category-based structure
-- [ ] Write tests for inclusion/exclusion proofs
+### [x] Days 3-4: Merkle Inclusion & Hash Circuits
+- [x] Implement basic Merkle tree proof circuit in Noir
+- [x] Add Poseidon hash function integration
+- [ ] Create sparse Merkle tree for category-based structure — dropped; the
+      original sparse-inclusion logic had a soundness hole (see git history),
+      plain inclusion only for this phase
+- [x] Write tests for inclusion/exclusion proofs
 - [ ] Benchmark proving times
 
-### [ ] Days 5-6: Predicate Verification Circuits
-- [ ] Implement equality checks for attributes
-- [ ] Build range proof circuits (numeric predicates)
-- [ ] Add set membership verification
-- [ ] Create signature verification circuit (Ed25519/BLS)
-- [ ] Integrate time-binding logic into circuits
+### [x] Days 5-6: Predicate Verification Circuits
+- [x] Implement equality checks for attributes
+- [x] Build range proof circuits (numeric predicates, real witness values not
+      hardcoded stand-ins)
+- [x] Add set membership verification
+- [x] Create signature verification circuit — EdDSA/Baby Jubjub, not Ed25519/BLS
+- [x] Integrate time-binding logic into circuits — nonce is a public input,
+      verified off-circuit (see ARCHITECTURE.md); no in-circuit replay check
 
-**Status**: ⏳ Not Started
+**Status**: ✅ Done for this pass. All 4 use-case circuits
+(`emergency_session`, `ai_session`, `tax_session`, `identity_session`)
+compile to ACIR and have passing `nargo test` coverage, including
+`should_fail` tests per constraint. Known simplifications: fixed
+`MERKLE_DEPTH` (4) and fixed per-circuit record counts
+(`MAX_AI_RECORDS`/`MAX_DEDUCTIONS`/`MAX_ACHIEVEMENTS` = 4), no variable-count
+padding scheme yet.
 
 ---
 

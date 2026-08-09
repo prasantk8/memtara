@@ -3,41 +3,45 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use std::sync::Arc;
 
 pub mod encryption;
-pub mod commitment;
+pub mod merkle;
 pub mod session;
 
 #[derive(Debug, Clone)]
 pub struct Vault {
     pub encrypted_store: Arc<RwLock<EncryptedStore>>,
-    pub commitments: CommitmentManager,
+    pub commitments: Arc<RwLock<commitment::CommitmentManager>>,
 }
 
 impl Vault {
     pub fn new() -> Self {
         Self {
             encrypted_store: Arc::new(RwLock::new(EncryptedStore::new())),
-            commitments: CommitmentManager::new(),
+            commitments: Arc::new(RwLock::new(commitment::CommitmentManager::new())),
         }
     }
 
-    /// Store an encrypted record with metadata
-    pub async fn store_record(&self, item: VaultItem) -> Result<()> {
+    /// Store an encrypted record with metadata under the given encryption key.
+    pub async fn store_record(&self, item: VaultItem, encryption_key: &[u8; 32]) -> Result<()> {
         let mut store = self.encrypted_store.write().await;
         let id = item.id.clone();
-        
+
+        let data = item
+            .data
+            .as_deref()
+            .ok_or_else(|| anyhow!("VaultItem '{}' has no data to store", id))?;
+
         // Encrypt the data before storing
-        let encrypted_data = encryption::encrypt(&item.data)?;
-        
+        let encrypted_data = encryption::encrypt(data, encryption_key)?;
+
         // Create commitment to the record hash
         let record_hash = commitment::poseidon_commit(&[encrypted_data.hash()]);
-        self.commitments.add_record_commitment(&id, &record_hash);
-        
+        self.commitments.write().await.add_record_commitment(&id, &record_hash);
+
         store.items.insert(id, VaultItemEntry {
             encrypted_data,
             category: item.category.clone(),
@@ -49,15 +53,15 @@ impl Vault {
         Ok(())
     }
 
-    /// Retrieve an encrypted record by ID (requires decryption key)
-    pub async fn get_record(&self, id: &str, decryption_key: &[u8]) -> Result<VaultItem> {
+    /// Retrieve an encrypted record by ID (requires the decryption key it was stored with)
+    pub async fn get_record(&self, id: &str, decryption_key: &[u8; 32]) -> Result<VaultItem> {
         let store = self.encrypted_store.read().await;
-        
+
         if let Some(entry) = store.items.get(id) {
             let decrypted_data = encryption::decrypt(&entry.encrypted_data, decryption_key)?;
             Ok(VaultItem {
                 id: id.to_string(),
-                data: decrypted_data,
+                data: Some(decrypted_data),
                 category: entry.category.clone(),
                 metadata: entry.metadata.clone(),
             })
@@ -87,20 +91,21 @@ impl Vault {
             .collect())
     }
 
-    /// Build a Merkle tree of all records in a category for ZKP proofs
-    pub async fn build_category_tree(&self, category: &str) -> Result<erkatree::MerkleTree> {
+    /// Build a Merkle tree of all records in a category for ZKP proofs.
+    ///
+    /// TODO(Phase 3): switch to Poseidon-BN254 (see vault/src/merkle.rs) so
+    /// this root matches what circuits/lib/src/merkle_inclusion.nr verifies.
+    pub async fn build_category_tree(&self, category: &str) -> Result<merkle::MerkleTree> {
         let store = self.encrypted_store.read().await;
-        
-        let mut leaves: Vec<[u8; 32]> = vec![];
-        for (_, entry) in store.items.iter() {
-            if entry.category == category {
-                // Use the commitment as leaf (already a hash)
-                leaves.push(entry.commitment.to_string().as_bytes().try_into().unwrap_or([0u8; 32]));
-            }
-        }
-        
-        let tree = erkatree::MerkleTree::new(leaves)?;
-        Ok(tree)
+
+        let leaves: Vec<[u8; 32]> = store
+            .items
+            .values()
+            .filter(|entry| entry.category == category)
+            .map(|entry| entry.commitment)
+            .collect();
+
+        Ok(merkle::MerkleTree::new(leaves))
     }
 
     /// Generate ZKP for proving possession of records matching criteria
@@ -112,12 +117,12 @@ impl Vault {
         
         // Collect matching records
         let mut matching_records: Vec<RecordMetadata> = vec![];
-        for (_, entry) in store.items.iter() {
+        for (id, entry) in store.items.iter() {
             if request.categories.contains(&entry.category) {
                 // Check predicates (simplified - would use attribute_predicates.nr)
                 if self.matches_predicate(entry, &request.predicates)? {
                     matching_records.push(RecordMetadata {
-                        id: entry.id.clone(),
+                        id: id.clone(),
                         category: entry.category.clone(),
                         created_at: entry.created_at,
                         commitment: entry.commitment,
@@ -128,7 +133,7 @@ impl Vault {
 
         Ok(SessionProof {
             session_id: uuid::Uuid::new_v4().to_string(),
-            vault_root: self.commitments.get_root(),
+            vault_root: self.commitments.read().await.get_root(),
             records_included: matching_records,
             policy_signature: request.policy_signature,
             nonce: request.nonce,
@@ -142,7 +147,7 @@ impl Vault {
         for pred in predicates {
             match pred.field.as_str() {
                 "age" => {
-                    if let Some(age) = entry.metadata.get("age").and_then(|v| v.parse::<u32>().ok()) {
+                    if let Some(age) = entry.metadata.get("age").and_then(|v| v.as_u64()).map(|n| n as u32) {
                         if !(pred.min_value.map_or(true, |min| age >= min)) 
                             || !(pred.max_value.map_or(true, |max| age <= max)) {
                             return Ok(false);
@@ -168,8 +173,8 @@ pub struct VaultItem {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone)]
-struct VaultItemEntry {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultItemEntry {
     encrypted_data: encryption::EncryptedData,
     pub category: String,
     pub created_at: i64,
@@ -237,6 +242,8 @@ pub struct SessionProof {
 
 pub mod commitment {
     use super::Field;
+    use sha2::Digest;
+    use std::collections::HashMap;
 
     /// Poseidon hash commitment (simplified - would integrate with actual ZKP lib)
     pub fn poseidon_commit(inputs: &[Field]) -> [u8; 32] {
@@ -248,10 +255,10 @@ pub mod commitment {
         hasher.finalize().into()
     }
 
+    #[derive(Debug)]
     pub struct CommitmentManager {
         records: HashMap<String, [u8; 32]>,
         categories: HashMap<String, Vec<[u8; 32]>>,
-        root: [u8; 32],
     }
 
     impl CommitmentManager {
@@ -259,7 +266,6 @@ pub mod commitment {
             Self {
                 records: HashMap::new(),
                 categories: HashMap::new(),
-                root: [0u8; 32],
             }
         }
 
@@ -296,11 +302,13 @@ pub mod commitment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::Digest;
 
     #[tokio::test]
     async fn test_vault_store_and_retrieve() -> Result<()> {
         let vault = Vault::new();
-        
+        let key = encryption::generate_key();
+
         let item = VaultItem {
             id: "test-record-1".to_string(),
             data: Some(b"sensitive health data".to_vec()),
@@ -311,12 +319,30 @@ mod tests {
             ]),
         };
 
-        vault.store_record(item.clone()).await?;
-        
-        let retrieved = vault.get_record("test-record-1", b"test-key").await;
-        
-        // Note: retrieval will fail without proper key derivation - this is expected
-        assert!(retrieved.is_err() || retrieved.unwrap().id == "test-record-1");
+        vault.store_record(item.clone(), &key).await?;
+
+        let retrieved = vault.get_record("test-record-1", &key).await?;
+        assert_eq!(retrieved.id, "test-record-1");
+        assert_eq!(retrieved.data, item.data);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_record_fails_with_wrong_key() -> Result<()> {
+        let vault = Vault::new();
+        let key = encryption::generate_key();
+        let wrong_key = encryption::generate_key();
+
+        let item = VaultItem {
+            id: "test-record-2".to_string(),
+            data: Some(b"sensitive health data".to_vec()),
+            category: "health".to_string(),
+            metadata: HashMap::new(),
+        };
+
+        vault.store_record(item, &key).await?;
+        assert!(vault.get_record("test-record-2", &wrong_key).await.is_err());
 
         Ok(())
     }

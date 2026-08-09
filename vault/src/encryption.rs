@@ -5,10 +5,11 @@ use anyhow::{anyhow, Result};
 use aes_gcm::{aead::AeadInPlace, Aes256Gcm, KeyInit, Nonce};
 use rand::rngs::OsRng;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Encrypted data container
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncryptedData {
     pub ciphertext: Vec<u8>,
     pub nonce: [u8; 12], // GCM nonce size
@@ -29,51 +30,46 @@ pub fn derive_key(master_key: &[u8], context: &str) -> Result<[u8; 32]> {
     let mut hasher = Sha256::new();
     hasher.update(master_key);
     hasher.update(context.as_bytes());
-    
+
     Ok(hasher.finalize().into())
 }
 
-/// Encrypt data using AES-256-GCM
-pub fn encrypt(plaintext: &[u8]) -> Result<EncryptedData> {
+/// Encrypt data using AES-256-GCM under the caller-supplied key.
+pub fn encrypt(plaintext: &[u8], key: &[u8; 32]) -> Result<EncryptedData> {
     // Generate random nonce
     let mut nonce_bytes = [0u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
-    
-    // Use a placeholder key derivation (in production, use proper key management)
-    let key_bytes = derive_key(b"memtara-vault-default-key", "encryption")?;
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+
+    let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|e| anyhow!("Invalid key length: {}", e))?;
-    
+
     let nonce = Nonce::from_slice(&nonce_bytes);
-    
+
     // Clone plaintext for in-place encryption (GCM requires this)
     let mut buffer = plaintext.to_vec();
-    
+
     cipher.encrypt_in_place(nonce, b"", &mut buffer)
         .map_err(|e| anyhow!("Encryption failed: {}", e))?;
-    
+
     Ok(EncryptedData {
         ciphertext: buffer,
         nonce: nonce_bytes,
     })
 }
 
-/// Decrypt data using AES-256-GCM
-pub fn decrypt(encrypted: &EncryptedData, _decryption_key: &[u8]) -> Result<Vec<u8>> {
-    // In production, derive key from user's master key and context
-    let key_bytes = derive_key(b"memtara-vault-default-key", "encryption")?;
-    
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+/// Decrypt data using AES-256-GCM under the caller-supplied key.
+pub fn decrypt(encrypted: &EncryptedData, key: &[u8; 32]) -> Result<Vec<u8>> {
+    let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|e| anyhow!("Invalid key length: {}", e))?;
-    
+
     let nonce = Nonce::from_slice(&encrypted.nonce);
-    
+
     // Clone ciphertext for in-place decryption
     let mut buffer = encrypted.ciphertext.clone();
-    
+
     cipher.decrypt_in_place(nonce, b"", &mut buffer)
         .map_err(|e| anyhow!("Decryption failed: {}", e))?;
-    
+
     Ok(buffer)
 }
 
@@ -91,14 +87,27 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt() -> Result<()> {
         let plaintext = b"Sensitive health record data";
-        
-        let encrypted = encrypt(plaintext)?;
+        let key = generate_key();
+
+        let encrypted = encrypt(plaintext, &key)?;
         assert_ne!(encrypted.ciphertext, plaintext);
         assert_eq!(encrypted.nonce.len(), 12);
-        
-        let decrypted = decrypt(&encrypted, &[])?;
+
+        let decrypted = decrypt(&encrypted, &key)?;
         assert_eq!(decrypted, plaintext.as_slice());
-        
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_decrypt_fails_with_wrong_key() -> Result<()> {
+        let plaintext = b"Sensitive health record data";
+        let key = generate_key();
+        let wrong_key = generate_key();
+
+        let encrypted = encrypt(plaintext, &key)?;
+        assert!(decrypt(&encrypted, &wrong_key).is_err());
+
         Ok(())
     }
 

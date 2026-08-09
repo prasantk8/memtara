@@ -1,0 +1,9 @@
+[package]
+name = "memtara_circuits"
+type = "lib"
+authors = [""]
+compiler_version = ">=1.0.0"
+
+[dependencies]
+poseidon = { tag = "v0.3.0", git = "https://github.com/noir-lang/poseidon" }
+edwards = { tag = "v0.2.5", git = "https://github.com/noir-lang/noir-edwards" }

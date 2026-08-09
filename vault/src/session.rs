@@ -4,7 +4,7 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use sha2::Digest;
 use uuid::Uuid;
 
 /// Types of sessions in Memtara
@@ -22,29 +22,28 @@ pub enum SessionType {
     Custom,
 }
 
-/// Purpose hash constants (pre-computed for common use cases)
+/// Purpose hashes for common use cases.
+///
+/// These are plain functions rather than `const`s: `Sha256::digest` is not a
+/// `const fn`, so a `const` binding initialized from it does not compile.
 pub mod purposes {
     use sha2::{Digest, Sha256};
 
-    pub const EMERGENCY: [u8; 32] = {
-        let h = Sha256::digest(b"memtara:purpose:emergency");
-        h.into()
-    };
-    
-    pub const AI_SESSION: [u8; 32] = {
-        let h = Sha256::digest(b"memtara:purpose:ai_session");
-        h.into()
-    };
-    
-    pub const TAX_PREPARER: [u8; 32] = {
-        let h = Sha256::digest(b"memtara:purpose:tax_preparer");
-        h.into()
-    };
-    
-    pub const IDENTITY_INTERVIEW: [u8; 32] = {
-        let h = Sha256::digest(b"memtara:purpose:identity_interview");
-        h.into()
-    };
+    pub fn emergency() -> [u8; 32] {
+        Sha256::digest(b"memtara:purpose:emergency").into()
+    }
+
+    pub fn ai_session() -> [u8; 32] {
+        Sha256::digest(b"memtara:purpose:ai_session").into()
+    }
+
+    pub fn tax_preparer() -> [u8; 32] {
+        Sha256::digest(b"memtara:purpose:tax_preparer").into()
+    }
+
+    pub fn identity_interview() -> [u8; 32] {
+        Sha256::digest(b"memtara:purpose:identity_interview").into()
+    }
 }
 
 /// Session policy defining scope and constraints
@@ -179,14 +178,11 @@ impl SessionBuilder {
         
         let nonce = Self::generate_nonce();
         let purpose_hash = match self.session_type {
-            Some(SessionType::Emergency) => purposes::EMERGENCY,
-            Some(SessionType::AiSession) => purposes::AI_SESSION,
-            Some(SessionType::Tax) => purposes::TAX_PREPARER,
-            Some(SessionType::Identity) => purposes::IDENTITY_INTERVIEW,
-            _ => {
-                let h = sha2::Sha256::digest(b"memtara:purpose:custom");
-                h.into()
-            }
+            Some(SessionType::Emergency) => purposes::emergency(),
+            Some(SessionType::AiSession) => purposes::ai_session(),
+            Some(SessionType::Tax) => purposes::tax_preparer(),
+            Some(SessionType::Identity) => purposes::identity_interview(),
+            _ => sha2::Sha256::digest(b"memtara:purpose:custom").into(),
         };
 
         // Compute commitments (simplified - would use proper Merkle trees in production)
@@ -259,10 +255,13 @@ impl Session {
         }
     }
 
-    /// Generate emergency session with minimal required data
-    pub fn generate_emergency_proof(
-        vault_data: &str, // Simplified - would use actual vault records
-    ) -> Result<EmergencyProof> {
+    /// Generate emergency session with minimal required data.
+    ///
+    /// TODO(Phase 3): this still returns fixed placeholder data regardless
+    /// of `_vault_data` — wiring to real stored vault records (and to the
+    /// emergency_session Noir circuit) is session/proof-generation API
+    /// work, out of scope for this pass.
+    pub fn generate_emergency_proof(_vault_data: &str) -> Result<EmergencyProof> {
         let nonce = SessionBuilder::generate_nonce();
         
         Ok(EmergencyProof {

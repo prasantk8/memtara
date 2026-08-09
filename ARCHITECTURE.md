@@ -239,6 +239,35 @@ Response:
 }
 ```
 
+## Implementation Notes (Phase 1/2, as built)
+
+Two deliberate deviations from the plan above, made when `circuits/` was
+turned from placeholder `.nr` files into a real, compiling Nargo workspace:
+
+- **Signatures: EdDSA/Baby Jubjub, not Ed25519/BLS.** True Ed25519
+  (Curve25519) or BLS (BLS12-381) verification inside a Noir circuit over
+  BN254 requires expensive non-native field emulation. EdDSA over Baby
+  Jubjub is native to the proving curve and is what Noir's own reference
+  implementation uses (`noir-lang/noir-edwards` + `noir-lang/poseidon`, see
+  `circuits/lib/src/signature_verify.nr`). Vault records destined for a ZK
+  proof need a Baby Jubjub keypair, separate from any Ed25519 identity key
+  used elsewhere.
+- **Replay protection is off-circuit.** The original design had a nonce
+  non-membership check inside the circuit; that logic never actually
+  verified non-membership (see git history). A real in-circuit
+  non-membership proof is possible but heavy. Instead, `nonce` is a public
+  input on every session circuit, bound into the signed policy commitment —
+  a verifier-side registry is responsible for rejecting a nonce it has
+  already seen. This matches how production ZK session systems actually do
+  it and is the standard tradeoff, not a shortcut specific to this project.
+
+Also: `circuits/lib` fixes a compile-time Merkle depth (`MERKLE_DEPTH = 4`)
+and each session circuit proves a fixed record count
+(`MAX_AI_RECORDS`/`MAX_DEDUCTIONS`/`MAX_ACHIEVEMENTS` = 4) rather than a
+variable-count padding scheme — both are placeholders sized for this
+phase's tests, to be tuned against the real vault's record counts in
+Phase 3.
+
 ## Security Considerations
 
 ### Threat Model
@@ -249,7 +278,9 @@ Response:
    - Mitigation: Data still encrypted; ZKP only proves possession of keys
 
 3. **Replay Attacks**: Reusing old proofs for new sessions
-   - Mitigation: Nonce and timestamp in circuit verification
+   - Mitigation: Nonce is a public input bound into the signed policy
+     commitment; an off-circuit verifier registry rejects a nonce it has
+     already seen (see Implementation Notes above)
 
 4. **Quantum Threats**: Future quantum computers breaking current crypto
    - Mitigation: Plan for post-quantum migration (Lattice-based signatures)

@@ -1,0 +1,10 @@
+# Noir
+/circuits/target/
+**/target/
+
+# Rust (memtara-vault is a library crate; lockfile isn't committed by convention)
+/vault/target/
+/vault/Cargo.lock
+
+# macOS
+.DS_Store

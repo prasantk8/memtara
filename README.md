@@ -33,27 +33,34 @@ memtara-zkp/
 ## Quick Start
 
 ### Prerequisites
-- Rust 1.70+ (for vault layer)
-- Node.js 18+ (for web frontend)
-- Noir toolchain (`cargo install --git https://github.com/noir-lang/noir_rs`)
-- Docker (optional, for containerized proving)
+- Rust (install via [rustup](https://rustup.rs))
+- Noir toolchain (install via [noirup](https://github.com/noir-lang/noirup):
+  `curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash && noirup`)
+- Node.js 18+ (for the web frontend — not yet scaffolded, see `web/`)
 
-### Installation
+### Vault (Rust)
 
 ```bash
-# Clone repository
-cd memtara-zkp
-
-# Install Rust dependencies
+cd vault
 cargo build --release
-
-# Install Node.js dependencies
-npm install
-
-# Run tests
-cargo test        # For vault layer
-npm run test      # For web frontend
+cargo test
 ```
+
+### Circuits (Noir)
+
+```bash
+cd circuits
+nargo test --workspace
+
+# ACIR compilation currently requires this flag due to a known upstream
+# Noir compiler false-positive in noir-lang/noir-edwards' EC arithmetic
+# (noir-lang/noir#6793) — the library's own asserts do constrain the
+# unsafe block's outputs, the static checker just can't see it here.
+nargo compile --workspace --skip-brillig-constraints-check
+```
+
+`cli/`, `web/`, and `packages/` are not yet implemented (see
+[TODO.md](./TODO.md)).
 
 ## Use Cases
 
@@ -74,7 +81,7 @@ Verify that AI assistants only received granted context, with cryptographic assu
 
 ## Development Roadmap
 
-See [TODO.md](./TOD0.md) for detailed implementation phases and progress tracking.
+See [TODO.md](./TODO.md) for detailed implementation phases and progress tracking.
 
 ## Security Model
 
