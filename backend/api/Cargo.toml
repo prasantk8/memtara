@@ -1,0 +1,40 @@
+[package]
+name = "memtara-api"
+version = "0.1.0"
+edition = "2021"
+description = "Memtara backend: auth, encrypted vault sync, disclosure orchestration, proof verification"
+
+[dependencies]
+memtara-vault = { path = "../../vault" }
+
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1.35", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "uuid", "chrono", "json", "migrate"] }
+
+uuid = { version = "1.8", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
+
+# In-memory cache for in-flight WebAuthn ceremony state (see auth/webauthn.rs).
+dashmap = "6"
+
+rand = "0.8"
+sha2 = "0.10"
+argon2 = "0.5"
+base64 = "0.22"
+
+anyhow = "1.0"
+thiserror = "1.0"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
