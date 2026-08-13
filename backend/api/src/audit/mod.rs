@@ -1,9 +1,11 @@
 // Audit: a hash-chained, append-only log against `audit_log`
 // (migrations/0001_init.sql — `id, event_type, ref_id, event_hash,
-// prev_hash, created_at`; schema is final for this pass, not touched here).
+// prev_hash, created_at`, plus `seq` added in
+// migrations/0002_audit_log_seq.sql — a new migration, not an edit to the
+// applied one; see that file for why `created_at` alone isn't a safe total
+// order for the chain).
 //
-// Chain scope: GLOBAL, not per-org. Two reasons, both forced by the schema
-// being final:
+// Chain scope: GLOBAL, not per-org. Two reasons:
 //   1. `audit_log` has no `org_id` column to key a per-org chain off of, and
 //      `ref_id` is heterogeneous — depending on `event_type` it names a
 //      `disclosure_requests` row (created/revoked/proof events) or, in
@@ -127,8 +129,12 @@ async fn append_locked(
         .execute(&mut *conn)
         .await?;
 
+    // Ordered by `seq` (a bigserial, see migrations/0002_audit_log_seq.sql),
+    // not `created_at` — timestamp resolution can tie under rapid
+    // lock-serialized inserts, and a UUID tiebreak would be arbitrary with
+    // respect to true insertion order. `seq` never ties.
     let prev_hash: Option<Vec<u8>> =
-        sqlx::query_scalar!("select event_hash from audit_log order by created_at desc, id desc limit 1")
+        sqlx::query_scalar!("select event_hash from audit_log order by seq desc limit 1")
             .fetch_optional(&mut *conn)
             .await?;
 
@@ -225,7 +231,7 @@ async fn get_org_audit_log(
         from audit_log al
         join disclosure_requests dr on dr.id = al.ref_id
         where dr.org_id = $1
-        order by al.created_at asc, al.id asc
+        order by al.seq asc
         "#,
         path_org_id,
     )
@@ -422,17 +428,27 @@ mod tests {
             // Walk every row committed between e1 and e3 (inclusive) — a
             // contiguous slice of the global chain, whoever wrote the rows
             // — and confirm each one's prev_hash equals the row
-            // immediately before it in true insertion order. This holds
-            // unconditionally: `append_locked`'s advisory lock means the
-            // "select last row" that produced each row's prev_hash was
-            // never racing a concurrent insert, so (created_at, id) order
-            // on the finished table always reproduces true causal order.
+            // immediately before it in true insertion order.
+            //
+            // Order by `seq` (migrations/0002_audit_log_seq.sql), not
+            // `created_at`: this test runs concurrently with every other
+            // `cargo test` DB test that also calls `audit::record` as a side
+            // effect (disclosure/verify tests), and `created_at` resolution
+            // can tie under rapid parallel inserts even though
+            // `append_locked`'s advisory lock always serializes the actual
+            // writes correctly. A tie on `created_at` previously fell back
+            // to `id desc` — a random UUID with no relationship to true
+            // insertion order — which is what made this test genuinely
+            // flaky under default (parallel) `cargo test`, not just
+            // occasionally slow. `seq` is a bigserial: allocation order is
+            // strictly monotonic and never ties, so it reproduces true
+            // causal order unconditionally.
             let rows = sqlx::query!(
                 r#"
                 select id, event_hash, prev_hash
                 from audit_log
                 where created_at >= $1 and created_at <= $2
-                order by created_at asc, id asc
+                order by seq asc
                 "#,
                 e1.created_at,
                 e3.created_at,
