@@ -1,14 +1,14 @@
 mod auth;
 mod config;
 mod db;
+mod disclosure;
 mod domain;
 mod error;
 mod state;
 mod vault_sync;
+mod verify;
 
 // Each engineer adds their module here as it's built:
-// mod disclosure;
-// mod verify;
 // mod orgs;
 // mod audit;
 
@@ -36,6 +36,12 @@ async fn main() -> anyhow::Result<()> {
 
     sqlx::migrate!("./migrations").run(&pool).await?;
 
+    // Generate any missing per-circuit verification keys (see
+    // verify/mod.rs for why this happens once at boot rather than lazily).
+    // Fails fast: if `bb` isn't installed/on PATH, or circuits/target/ is
+    // missing compiled bytecode, the server should not come up half-working.
+    verify::ensure_vkeys(&config).await?;
+
     let webauthn = auth::webauthn::build(&config)?;
     let otp_provider: Arc<dyn OtpProvider> = Arc::new(LoggingOtpProvider);
     let uae_pass_provider: Arc<dyn UaePassProvider> = Arc::new(StubUaePassProvider {
@@ -57,6 +63,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/healthz", get(healthz))
         .merge(auth::router())
         .merge(vault_sync::router())
+        .merge(disclosure::router())
+        .merge(verify::router())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

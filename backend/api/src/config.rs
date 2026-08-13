@@ -25,6 +25,20 @@ pub struct Config {
     pub uae_pass_client_secret: String,
     pub uae_pass_redirect_uri: String,
     pub uae_pass_authorize_url: String,
+    /// Path (or bare name, resolved via PATH) to the `bb` (Barretenberg)
+    /// CLI binary used by `verify/` to check proofs and generate
+    /// verification keys. See verify/mod.rs for the exact invocations.
+    pub bb_bin: String,
+    /// Directory containing each circuit's compiled ACIR bytecode
+    /// (`<circuit_type>.json`), produced by `nargo compile` under
+    /// `circuits/`. Defaults to `circuits/target` relative to this crate's
+    /// manifest dir, which is correct regardless of the process's cwd.
+    pub circuits_target_dir: String,
+    /// Directory `verify/` generates and caches per-circuit verification
+    /// keys in (a build artifact of `circuits/`, not source — gitignored,
+    /// regenerated on boot if missing). Defaults to `vkeys` under this
+    /// crate's manifest dir.
+    pub vkeys_dir: String,
 }
 
 impl Config {
@@ -61,6 +75,11 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:5173/auth/uae-pass/callback".into()),
             uae_pass_authorize_url: env::var("UAE_PASS_AUTHORIZE_URL")
                 .unwrap_or_else(|_| "https://stg-id.uaepass.ae/idshub/authorize".into()),
+            bb_bin: env::var("BB_BIN").unwrap_or_else(|_| "bb".into()),
+            circuits_target_dir: env::var("CIRCUITS_TARGET_DIR")
+                .unwrap_or_else(|_| format!("{}/../../circuits/target", env!("CARGO_MANIFEST_DIR"))),
+            vkeys_dir: env::var("VKEYS_DIR")
+                .unwrap_or_else(|_| format!("{}/vkeys", env!("CARGO_MANIFEST_DIR"))),
         })
     }
 }

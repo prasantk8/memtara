@@ -8,3 +8,7 @@
 
 # macOS
 .DS_Store
+
+# Backend: per-circuit bb verification keys — a build artifact of
+# circuits/, regenerated at boot by verify::ensure_vkeys, not source.
+/backend/api/vkeys/
