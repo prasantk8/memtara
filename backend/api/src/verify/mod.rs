@@ -287,6 +287,7 @@ async fn record_valid_proof(
     db: &sqlx::PgPool,
     request_id: Uuid,
     org_id: Uuid,
+    user_id: Uuid,
     nonce: &[u8],
     public_inputs_json: &serde_json::Value,
     proof_bytes: &[u8],
@@ -329,6 +330,21 @@ async fn record_valid_proof(
         request_id,
     )
     .execute(&mut *tx)
+    .await?;
+
+    // Written inside the SAME transaction as the nonce consumption and the
+    // fulfilled flip, via `record_in_tx` rather than `audit::record`: this
+    // is the one event in this module where "the action happened but the
+    // audit entry didn't get written" would actually matter (a proof that
+    // silently fulfilled a request with no corresponding trail entry), so
+    // it commits or rolls back as one atomic unit with everything else
+    // here, not as a best-effort follow-up call after commit.
+    crate::audit::record_in_tx(
+        &mut tx,
+        "proof_verified",
+        Some(request_id),
+        serde_json::json!({ "org_id": org_id, "user_id": user_id, "proof_id": proof_id, "valid": true }),
+    )
     .await?;
 
     tx.commit().await?;
@@ -445,8 +461,6 @@ async fn submit_proof(
         // attacker submitting garbage against someone else's pending
         // request must not be able to burn the legitimate holder's one-shot
         // nonce, and the request must remain retriable.
-        // TODO(audit): once orgs/audit exists (HANDOFF.md item 2), also
-        // write a `proof_verification_failed` audit_log entry here.
         let proof_id: Uuid = sqlx::query_scalar!(
             r#"
             insert into proofs (request_id, public_inputs, proof_bytes, valid)
@@ -460,6 +474,19 @@ async fn submit_proof(
         .fetch_one(&state.db)
         .await?;
 
+        // An audit trail that only logs successes isn't an audit trail —
+        // record the rejection too. ref_id is the disclosure request (same
+        // convention as every other disclosure/proof event, see
+        // audit/mod.rs), not the proof row, so `GET /orgs/:id/audit-log`'s
+        // join finds it.
+        crate::audit::record(
+            &state.db,
+            "proof_verification_failed",
+            Some(id),
+            serde_json::json!({ "org_id": row.org_id, "user_id": row.user_id, "proof_id": proof_id, "valid": false }),
+        )
+        .await?;
+
         return Ok((
             StatusCode::CREATED,
             Json(SubmitProofResponse {
@@ -470,9 +497,7 @@ async fn submit_proof(
         ));
     }
 
-    // TODO(audit): once orgs/audit exists, write a `proof_verified`
-    // audit_log entry here (and a `disclosure_request_fulfilled` one).
-    match record_valid_proof(&state.db, id, row.org_id, &row.nonce, &public_inputs_json, &proof_bytes).await? {
+    match record_valid_proof(&state.db, id, row.org_id, row.user_id, &row.nonce, &public_inputs_json, &proof_bytes).await? {
         RecordOutcome::Recorded { proof_id } => Ok((
             StatusCode::CREATED,
             Json(SubmitProofResponse {
@@ -590,6 +615,12 @@ mod tests {
         }
 
         async fn cleanup(db: &PgPool, org_id: Uuid, user_id: Uuid) {
+            let _ = sqlx::query!(
+                "delete from audit_log where ref_id in (select id from disclosure_requests where org_id = $1)",
+                org_id,
+            )
+            .execute(db)
+            .await;
             let _ = sqlx::query!("delete from used_nonces where org_id = $1", org_id).execute(db).await;
             let _ = sqlx::query!("delete from disclosure_requests where org_id = $1", org_id).execute(db).await;
             let _ = sqlx::query!("delete from organizations where id = $1", org_id).execute(db).await;
@@ -615,7 +646,7 @@ mod tests {
             let public_inputs_json = serde_json::json!(["0x1", "0x2"]);
 
             let first =
-                record_valid_proof(&db, request_id, org_id, &nonce, &public_inputs_json, b"proof-bytes-1").await.unwrap();
+                record_valid_proof(&db, request_id, org_id, user_id, &nonce, &public_inputs_json, b"proof-bytes-1").await.unwrap();
             assert!(matches!(first, RecordOutcome::Recorded { .. }), "first submission of a fresh nonce must succeed");
 
             let status: String =
@@ -629,7 +660,7 @@ mod tests {
             // "cryptographically valid" for this test's purposes) proof
             // submission. Must be rejected, not recorded a second time.
             let second =
-                record_valid_proof(&db, request_id, org_id, &nonce, &public_inputs_json, b"proof-bytes-2").await.unwrap();
+                record_valid_proof(&db, request_id, org_id, user_id, &nonce, &public_inputs_json, b"proof-bytes-2").await.unwrap();
             assert!(matches!(second, RecordOutcome::Replayed), "replaying an already-used nonce must be rejected");
 
             let used_nonce_count: i64 = sqlx::query_scalar!(
@@ -680,7 +711,7 @@ mod tests {
                 handles.push(tokio::spawn(async move {
                     let public_inputs_json = serde_json::json!([format!("racer-{i}")]);
                     let proof_bytes = vec![i; 16];
-                    record_valid_proof(&db, request_id, org_id, &nonce, &public_inputs_json, &proof_bytes)
+                    record_valid_proof(&db, request_id, org_id, user_id, &nonce, &public_inputs_json, &proof_bytes)
                         .await
                         .unwrap()
                 }));
@@ -739,8 +770,8 @@ mod tests {
             let request_b = make_pending_request(&db, org_id, user_id, &nonce_b).await;
             let public_inputs_json = serde_json::json!([]);
 
-            let a = record_valid_proof(&db, request_a, org_id, &nonce_a, &public_inputs_json, b"a").await.unwrap();
-            let b = record_valid_proof(&db, request_b, org_id, &nonce_b, &public_inputs_json, b"b").await.unwrap();
+            let a = record_valid_proof(&db, request_a, org_id, user_id, &nonce_a, &public_inputs_json, b"a").await.unwrap();
+            let b = record_valid_proof(&db, request_b, org_id, user_id, &nonce_b, &public_inputs_json, b"b").await.unwrap();
 
             assert!(matches!(a, RecordOutcome::Recorded { .. }));
             assert!(matches!(b, RecordOutcome::Recorded { .. }), "a different nonce must not be blocked by an unrelated one");

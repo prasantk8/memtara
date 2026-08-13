@@ -1,16 +1,14 @@
+mod audit;
 mod auth;
 mod config;
 mod db;
 mod disclosure;
 mod domain;
 mod error;
+mod orgs;
 mod state;
 mod vault_sync;
 mod verify;
-
-// Each engineer adds their module here as it's built:
-// mod orgs;
-// mod audit;
 
 use auth::otp::{LoggingOtpProvider, OtpProvider};
 use auth::uae_pass::{StubUaePassProvider, UaePassProvider};
@@ -65,6 +63,8 @@ async fn main() -> anyhow::Result<()> {
         .merge(vault_sync::router())
         .merge(disclosure::router())
         .merge(verify::router())
+        .merge(orgs::router())
+        .merge(audit::router())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

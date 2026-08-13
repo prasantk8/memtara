@@ -2,20 +2,18 @@
 // that a bank/AI platform/hospital/government counter drives, and that the
 // `verify` module's proof submission route resolves.
 //
-// Org auth is a STUB for this pass: orgs/ (relying-party accounts, real
-// API-key auth) doesn't exist yet, per HANDOFF.md. Every org-facing route
-// here trusts a plain `X-Org-Id: <uuid>` header — no signature, no API key.
-// TODO: real org API-key auth, see orgs/ module (HANDOFF.md item 2) — once
-// it exists, replace `OrgId` below with that module's `OrgAuth` extractor
-// and delete this comment block.
+// Org auth is real: every org-facing route below is guarded by
+// `orgs::OrgAuth`, which resolves a presented `Authorization: Bearer
+// <api_key>` header to an org id the same way `auth::AuthUser` resolves a
+// session token to a user id (see orgs/mod.rs). This replaces an earlier
+// pass's `X-Org-Id: <uuid>` trust-me-header stub — there is no longer any
+// header this module trusts at face value.
 
 use axum::extract::{Path, Query, State};
 use axum::http::header::AUTHORIZATION;
-use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use axum::extract::FromRequestParts;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{DateTime, Utc};
@@ -26,10 +24,8 @@ use uuid::Uuid;
 use crate::auth::session_token::hash_token;
 use crate::domain::{CircuitType, DisclosureStatus, SessionPolicy};
 use crate::error::{ApiError, ApiResult};
+use crate::orgs::{org_id_for_api_key, OrgAuth};
 use crate::state::AppState;
-
-/// Header the org-auth stub trusts. See module doc comment.
-const ORG_ID_HEADER: &str = "x-org-id";
 
 /// Lower/upper bounds on a disclosure request's requested lifetime. Nothing
 /// in the product needs a pending request to outlive a week (an org that
@@ -55,82 +51,59 @@ pub fn router() -> Router<AppState> {
 }
 
 // ---------------------------------------------------------------------
-// Org-auth stub extractor
+// Dual-audience authorization (org-or-user)
 // ---------------------------------------------------------------------
-
-/// Trusts `X-Org-Id` at face value — no signature, no API key. Existence of
-/// the referenced org is checked explicitly where it matters (request
-/// creation), not here, so this extractor stays a cheap, reusable "parse
-/// the header" step. See module doc comment for the real-auth TODO.
-pub struct OrgId(pub Uuid);
-
-#[axum::async_trait]
-impl FromRequestParts<AppState> for OrgId {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &AppState) -> Result<Self, Self::Rejection> {
-        let header = parts
-            .headers
-            .get(ORG_ID_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .ok_or(ApiError::Unauthorized)?;
-        let id = Uuid::parse_str(header)
-            .map_err(|_| ApiError::BadRequest(format!("{ORG_ID_HEADER} header is not a valid UUID")))?;
-        Ok(OrgId(id))
-    }
-}
 
 /// Dual-audience ownership check shared by every route below (and by
 /// `verify::submit_proof`, which lives under the same `/disclosure-requests/
 /// :id/...` path space): a disclosure request may be read/revoked/resolved
-/// by either the org that created it (`X-Org-Id` matching `expected_org_id`)
-/// or the user it's for (a valid session bearer token matching
-/// `expected_user_id`). Not implemented as a third `FromRequestParts`
-/// extractor because "org header OR user session, checked against a row we
-/// haven't fetched yet" doesn't fit the "reject before the handler body
-/// runs" shape the other extractors use — we need the row's org_id/user_id
-/// first.
-///
-/// Deliberately duplicates the ~5-line session lookup from
-/// `auth::session_token::AuthUser` rather than reusing that extractor
-/// directly: `AuthUser` always requires a session and always fails closed
-/// on a missing token, whereas here a missing bearer is fine as long as the
-/// org header matched. Not worth restructuring already-verified auth code
-/// for this.
+/// by either the org that created it (a valid API key matching
+/// `expected_org_id`) or the user it's for (a valid session bearer token
+/// matching `expected_user_id`). Not implemented as a single
+/// `FromRequestParts` extractor because "org key OR user session, checked
+/// against a row we haven't fetched yet" doesn't fit the "reject before the
+/// handler body runs" shape `OrgAuth`/`AuthUser` use individually — we need
+/// the row's org_id/user_id first, so both possibilities are tried against
+/// the one `Authorization: Bearer <token>` header the caller sent: first as
+/// an org API key (`orgs::org_id_for_api_key`), then, if that doesn't match
+/// anything, as a user session token. A single header/scheme for both
+/// credential kinds (rather than a bespoke `X-Org-Id`-style header for one
+/// of them) is deliberate — it's the same reasoning `orgs::OrgAuth`'s doc
+/// comment gives for reading `Authorization: Bearer` instead of a custom
+/// header.
 pub(crate) async fn authorize_org_or_user(
     state: &AppState,
     headers: &HeaderMap,
     expected_org_id: Uuid,
     expected_user_id: Uuid,
 ) -> ApiResult<()> {
-    if let Some(raw) = headers.get(ORG_ID_HEADER).and_then(|v| v.to_str().ok()) {
-        let parsed = Uuid::parse_str(raw)
-            .map_err(|_| ApiError::BadRequest(format!("{ORG_ID_HEADER} header is not a valid UUID")))?;
-        return if parsed == expected_org_id { Ok(()) } else { Err(ApiError::Forbidden) };
+    let Some(auth) = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()) else {
+        return Err(ApiError::Unauthorized);
+    };
+    let Some(token) = auth.strip_prefix("Bearer ") else {
+        return Err(ApiError::Unauthorized);
+    };
+
+    if let Some(org_id) = org_id_for_api_key(&state.db, token).await? {
+        return if org_id == expected_org_id { Ok(()) } else { Err(ApiError::Forbidden) };
     }
 
-    if let Some(auth) = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()) {
-        if let Some(token) = auth.strip_prefix("Bearer ") {
-            let token_hash = hash_token(token);
-            let row = sqlx::query!(
-                r#"
-                select user_id from sessions
-                where token_hash = $1 and revoked_at is null and expires_at > now()
-                "#,
-                token_hash,
-            )
-            .fetch_optional(&state.db)
-            .await?;
+    let token_hash = hash_token(token);
+    let row = sqlx::query!(
+        r#"
+        select user_id from sessions
+        where token_hash = $1 and revoked_at is null and expires_at > now()
+        "#,
+        token_hash,
+    )
+    .fetch_optional(&state.db)
+    .await?;
 
-            return match row {
-                Some(row) if row.user_id == expected_user_id => Ok(()),
-                Some(_) => Err(ApiError::Forbidden),
-                None => Err(ApiError::Unauthorized),
-            };
-        }
+    match row {
+        Some(row) if row.user_id == expected_user_id => Ok(()),
+        Some(_) => Err(ApiError::Forbidden),
+        None => Err(ApiError::Unauthorized),
     }
-
-    Err(ApiError::Unauthorized)
 }
 
 fn generate_nonce() -> Vec<u8> {
@@ -212,7 +185,7 @@ struct DisclosureRequestResponse {
 }
 
 async fn create_disclosure_request(
-    OrgId(org_id): OrgId,
+    OrgAuth(org_id): OrgAuth,
     State(state): State<AppState>,
     Json(body): Json<CreateDisclosureRequestBody>,
 ) -> ApiResult<(StatusCode, Json<DisclosureRequestResponse>)> {
@@ -225,16 +198,10 @@ async fn create_disclosure_request(
         )));
     }
 
-    // TODO: real org API-key auth, see orgs/ module. Until then, confirm the
-    // header at least references a real org row, so a typo'd/garbage
-    // X-Org-Id produces a clear 400 instead of an opaque FK-violation 500
-    // from the insert below.
-    let org_exists = sqlx::query_scalar!(r#"select exists(select 1 from organizations where id = $1) as "exists!""#, org_id)
-        .fetch_one(&state.db)
-        .await?;
-    if !org_exists {
-        return Err(ApiError::BadRequest("X-Org-Id does not reference a known organization".into()));
-    }
+    // No separate "does this org exist" check needed here (an earlier,
+    // header-stub pass needed one): `OrgAuth` already proved `org_id` names
+    // a real row by successfully resolving the presented API key against
+    // `organizations.api_key_hash`.
 
     let user_exists =
         sqlx::query_scalar!(r#"select exists(select 1 from users where id = $1) as "exists!""#, body.user_id)
@@ -249,8 +216,6 @@ async fn create_disclosure_request(
     let nonce = generate_nonce();
     let expires_at = Utc::now() + chrono::Duration::seconds(body.ttl_seconds);
 
-    // TODO(audit): once orgs/audit exists (HANDOFF.md item 2), write a
-    // `disclosure_request_created` audit_log entry here.
     let row = sqlx::query!(
         r#"
         insert into disclosure_requests (org_id, user_id, circuit_type, policy, status, nonce, expires_at)
@@ -269,6 +234,24 @@ async fn create_disclosure_request(
 
     let policy: SessionPolicy = serde_json::from_value(row.policy)
         .map_err(|e| ApiError::Other(anyhow::anyhow!("stored policy failed to deserialize: {e}")))?;
+
+    // ref_id = the disclosure_requests row this event is about — every
+    // disclosure/proof audit event in this codebase uses that same
+    // convention, which is what lets `GET /orgs/:id/audit-log`
+    // (audit/mod.rs) join audit_log -> disclosure_requests -> org_id to
+    // scope an org to only its own trail.
+    crate::audit::record(
+        &state.db,
+        "disclosure_request_created",
+        Some(row.id),
+        serde_json::json!({
+            "org_id": row.org_id,
+            "user_id": row.user_id,
+            "circuit_type": row.circuit_type,
+            "ttl_seconds": body.ttl_seconds,
+        }),
+    )
+    .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -440,8 +423,6 @@ async fn revoke_disclosure_request(
         return Err(ApiError::Conflict(format!("cannot revoke a request that is already {}", current.as_str())));
     }
 
-    // TODO(audit): once orgs/audit exists, write a
-    // `disclosure_request_revoked` audit_log entry here.
     let updated = sqlx::query_scalar!(
         r#"
         update disclosure_requests set status = 'revoked'
@@ -454,7 +435,16 @@ async fn revoke_disclosure_request(
     .await?;
 
     match updated {
-        Some(status) => Ok(Json(RevokeResponse { id, status })),
+        Some(status) => {
+            crate::audit::record(
+                &state.db,
+                "disclosure_request_revoked",
+                Some(id),
+                serde_json::json!({ "org_id": row.org_id, "user_id": row.user_id }),
+            )
+            .await?;
+            Ok(Json(RevokeResponse { id, status }))
+        }
         // Lost a race with something else that changed status between the
         // check above and this UPDATE (e.g. a concurrent proof submission
         // fulfilling it). Re-fetch and report the real current state rather
@@ -519,22 +509,37 @@ mod tests {
             .expect("insert test user")
         }
 
-        async fn make_org(db: &PgPool) -> Uuid {
-            sqlx::query_scalar!(
+        /// Returns `(org_id, raw_api_key)` — a real key generated the exact
+        /// same way `orgs::create_org` does, hashed the exact same way
+        /// (`hash_token`), so tests exercising `authorize_org_or_user`/
+        /// `OrgAuth` are presenting a credential that round-trips for real,
+        /// not a placeholder string that happens to satisfy the column's
+        /// NOT NULL/unique constraints.
+        async fn make_org(db: &PgPool) -> (Uuid, String) {
+            let api_key = crate::orgs::generate_api_key();
+            let api_key_hash = hash_token(&api_key);
+            let org_id = sqlx::query_scalar!(
                 r#"
                 insert into organizations (name, org_type, api_key_hash)
                 values ($1, 'bank', $2)
                 returning id
                 "#,
                 format!("Test Bank {}", Uuid::new_v4()),
-                format!("hash-{}", Uuid::new_v4()),
+                api_key_hash,
             )
             .fetch_one(db)
             .await
-            .expect("insert test org")
+            .expect("insert test org");
+            (org_id, api_key)
         }
 
         async fn cleanup(db: &PgPool, org_id: Uuid, user_id: Uuid) {
+            let _ = sqlx::query!(
+                "delete from audit_log where ref_id in (select id from disclosure_requests where org_id = $1)",
+                org_id,
+            )
+            .execute(db)
+            .await;
             let _ = sqlx::query!("delete from disclosure_requests where org_id = $1", org_id).execute(db).await;
             let _ = sqlx::query!("delete from organizations where id = $1", org_id).execute(db).await;
             let _ = sqlx::query!("delete from users where id = $1", user_id).execute(db).await;
@@ -553,7 +558,7 @@ mod tests {
                 eprintln!("skipping: no DB reachable");
                 return;
             };
-            let org_id = make_org(&db).await;
+            let (org_id, _api_key) = make_org(&db).await;
             let user_id = make_user(&db).await;
 
             let past = Utc::now() - chrono::Duration::seconds(10);
@@ -592,7 +597,7 @@ mod tests {
                 eprintln!("skipping: no DB reachable");
                 return;
             };
-            let org_id = make_org(&db).await;
+            let (org_id, _api_key) = make_org(&db).await;
             let user_id = make_user(&db).await;
 
             let future = Utc::now() + chrono::Duration::seconds(3600);
@@ -618,18 +623,21 @@ mod tests {
         }
 
         /// `authorize_org_or_user` is the gate every disclosure/verify route
-        /// shares. Exercise it directly against real session rows: the
-        /// matching org header passes, a mismatched org header is
-        /// forbidden, and a session token belonging to a different user is
-        /// forbidden — proving this isn't a no-op that accidentally allows
-        /// everything through.
+        /// shares. Exercise it directly against real org API keys and real
+        /// session rows: the owning org's real key passes, a *different*
+        /// real org's key is forbidden (not just any garbage bearer token —
+        /// this proves the org lookup genuinely resolves to a distinct org
+        /// id, not that it accidentally always matches), and a session
+        /// token belonging to a different user is forbidden — proving this
+        /// isn't a no-op that accidentally allows everything through.
         #[tokio::test]
         async fn authorize_org_or_user_enforces_real_ownership() {
             let Some(db) = test_pool().await else {
                 eprintln!("skipping: no DB reachable");
                 return;
             };
-            let org_id = make_org(&db).await;
+            let (org_id, api_key) = make_org(&db).await;
+            let (other_org_id, other_org_api_key) = make_org(&db).await;
             let user_id = make_user(&db).await;
             let other_user_id = make_user(&db).await;
 
@@ -646,14 +654,15 @@ mod tests {
                 }),
             };
 
-            // Matching org header: allowed.
+            // Matching org's real API key: allowed.
             let mut headers = HeaderMap::new();
-            headers.insert(ORG_ID_HEADER, org_id.to_string().parse().unwrap());
+            headers.insert(AUTHORIZATION, format!("Bearer {api_key}").parse().unwrap());
             assert!(authorize_org_or_user(&state, &headers, org_id, user_id).await.is_ok());
 
-            // Mismatched org header: forbidden.
+            // A different, equally real org's API key: forbidden (resolves
+            // to a real-but-wrong org id, not treated as "no credentials").
             let mut headers = HeaderMap::new();
-            headers.insert(ORG_ID_HEADER, Uuid::new_v4().to_string().parse().unwrap());
+            headers.insert(AUTHORIZATION, format!("Bearer {other_org_api_key}").parse().unwrap());
             assert!(matches!(
                 authorize_org_or_user(&state, &headers, org_id, user_id).await,
                 Err(ApiError::Forbidden)
@@ -680,6 +689,15 @@ mod tests {
             headers.insert(AUTHORIZATION, format!("Bearer {}", issued_owner.token).parse().unwrap());
             assert!(authorize_org_or_user(&state, &headers, org_id, user_id).await.is_ok());
 
+            // Garbage bearer token matching neither an org key nor a
+            // session: unauthorized (not silently forbidden or allowed).
+            let mut headers = HeaderMap::new();
+            headers.insert(AUTHORIZATION, "Bearer totally-not-a-real-credential".parse().unwrap());
+            assert!(matches!(
+                authorize_org_or_user(&state, &headers, org_id, user_id).await,
+                Err(ApiError::Unauthorized)
+            ));
+
             // No credentials at all: unauthorized.
             let headers = HeaderMap::new();
             assert!(matches!(
@@ -691,6 +709,7 @@ mod tests {
                 .execute(&db)
                 .await;
             cleanup(&db, org_id, user_id).await;
+            let _ = sqlx::query!("delete from organizations where id = $1", other_org_id).execute(&db).await;
             let _ = sqlx::query!("delete from users where id = $1", other_user_id).execute(&db).await;
         }
     }
