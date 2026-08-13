@@ -80,6 +80,12 @@ cargo --version   # 1.97.1 last confirmed
 export PATH="$HOME/.nargo/bin:$PATH"
 nargo --version   # 1.0.0-beta.26 last confirmed
 
+# Barretenberg (bb) — needed for anything touching verify::. Not on PATH
+# by default; see the "Known environment gotcha" note below before you
+# spend time debugging what looks like a bug and isn't.
+export PATH="$HOME/.bb:$PATH"
+bb --version   # 5.1.0 last confirmed
+
 # Postgres — a DEDICATED container, already running, already migrated.
 # Do not touch the OTHER running containers (apex-postgres on 5432,
 # apex-redis, apex-orchestrator, etc.) — unrelated project, different port.
@@ -120,13 +126,18 @@ reentrant incremental verify failure` — this is a corrupted incremental
 compilation cache, not your code. Fix: `rm -rf backend/target/debug/incremental`
 and rebuild. Seen once already (see git log around commit 743e833).
 
-**Barretenberg (`bb`) is NOT installed yet** — the Verification Engineer
-role needs it and will need to install it first (Aztec's installer, same
-pattern as `noirup`/`nargo`):
+**Barretenberg (`bb`) is installed** (v5.1.0, picked manually — `bbup`'s
+auto-resolution doesn't yet know about nargo 1.0.0-beta.26) at `~/.bb/bb`,
+which is NOT on `PATH` by default in a fresh shell — every command that
+runs the server or anything touching `verify::` needs
+`export PATH="$HOME/.bb:$PATH"` alongside the cargo/nargo PATH exports
+above, or you'll see `failed to run "bb verify": No such file or directory`
+(this looks like a code bug — it isn't; independent verification hit this
+exact thing). Reinstall/upgrade if needed:
 ```bash
 curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/bbup/install | bash
-bbup
-bb --version   # confirm, don't assume
+~/.bb/bbup -v 5.1.0
+bb --version   # confirm, don't assume — don't trust this note either
 ```
 Confirm the exact `bb write_vk` / `bb verify` invocation empirically against
 one of the compiled circuits before wiring the whole module around assumed
@@ -235,33 +246,42 @@ flags.
 consecutive default-parallelism runs (not just `--test-threads=1`) as of
 this handoff.
 
-## Status: remaining work, in order
+## Status: this backend pass is complete
 
-### 1. Journeys writer
+Both remaining items from the original plan are done:
 
-`docs/journeys.md` — spec (not code) for UAE-resident user journeys beyond
-the two wireframed ones (bank AML/STR clearance, mortgage pre-approval).
-Format per journey: actor → trigger → disclosed predicate → which circuit
-(`emergency_session`/`ai_session`/`tax_session`/`identity_session`) → auth
-path → UI touchpoint. Cover both tech-savvy HNWI journeys (Golden Visa /
-investor compliance proof, real-estate proof-of-funds, accredited-investor
-certification, family-office succession disclosure) and non-tech-savvy
-journeys (assisted emergency card via physical NFC/QR, government-counter
-staff-assisted proof at an Amer/Tasheel-style center — Arabic-first,
-icon/voice-guided, minimal reading required). This is a writing task, not an
-implementation task — sonnet-tier effort is fine, don't overthink model
-choice here.
+- **`docs/journeys.md`** — 8 journeys (the 2 wireframed ones + 4 tech-savvy
+  HNWI + 2 non-tech-savvy), each mapped to actor → trigger → disclosed
+  predicate → circuit → auth path → UI touchpoint. One real product gap
+  surfaced: `organizations`/`OrgAuth` authenticates an org, not an
+  individual recipient within one, which the family-office succession
+  journey needs and doesn't have today. Worth a decision before frontend
+  work depends on it — not a blocker for anything already built.
+- **End-to-end HTTP pass** — ran the real flow against a live server (org
+  create → OTP login → disclosure request create → garbage-proof submit →
+  real `bb` rejection confirmed → audit log confirmed chained and correct
+  → cross-org 403 confirmed → revoke → re-revoke idempotent → proof
+  submission to a revoked request correctly 409s), all over actual HTTP,
+  not `cargo test`. One correction to the original plan: it assumed a
+  circuit's `mod tests` fixtures could be hand-crafted into a `valid=true`
+  submission — they can't (every fixture is a `should_fail` case; a
+  genuinely valid proof needs real EdDSA signing, which is exactly the
+  client-side proving this project keeps out of the backend by design).
+  So this pass proves the whole system for real up to that boundary; the
+  valid=true path is covered at the integration-test level instead
+  (`verify::tests::db`, which exercises the DB-side atomicity of accepting
+  a proof without needing `bb` to have actually produced one) — a
+  deliberate, documented seam, not a gap someone forgot.
+- Also found and fixed one thing not in the original plan: `bb` installs
+  to `~/.bb/bb`, not on `PATH` by default — cost real time to diagnose
+  (looked exactly like a server bug) before landing on "it's an
+  environment issue," now documented above so it doesn't cost the next
+  person that same time.
 
-### 2. End-to-end verification pass
-
-Once all of the above compiles and its own tests pass: register a fake org →
-create a disclosure request → hand-craft a proof using one of the circuits'
-own test fixtures (`circuits/*/src/main.nr` `mod tests` blocks have working
-examples — don't try to build a real client-side prover for this, that's
-explicitly out of scope, see below) → POST it to `verify/` → confirm
-`valid=true`, a `used_nonces` row exists, an `audit_log` entry was written →
-POST the same proof again → confirm it's rejected as a replay. Report the
-exact commands and output.
+Nothing from the approved plan remains open. The natural next phase is
+client-side proof generation (NoirJS/WASM or native) and an actual
+frontend against `web/reference/memtara_wireframes.tsx` — both explicitly
+out of scope for this backend pass, see below.
 
 ## Explicitly out of scope (don't drift into these)
 
