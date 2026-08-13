@@ -93,14 +93,32 @@ export DATABASE_URL="postgres://memtara:memtara@localhost:5433/memtara"
 
 cd backend
 cargo build   # must be zero errors before you move on from any module
-cargo test    # 10/10 passing as of this handoff
-sqlx migrate run   # only needed if you add a new migration file
+cargo test    # 40/40 passing as of this handoff, confirmed stable across 5
+              # consecutive default-parallelism runs (see git log 743e833
+              # for why that's worth stating explicitly)
+
+# sqlx-cli is installed (`cargo install sqlx-cli --no-default-features
+# --features postgres,rustls`). If you add a new migration file, apply it
+# with this BEFORE `cargo build` — sqlx's query! macros validate against
+# the LIVE database schema at compile time, and `sqlx::migrate!().run()`
+# only runs when the compiled binary actually starts, which creates a
+# chicken-and-egg problem if you try to `cargo build`/`cargo run` your way
+# into applying a migration that your own new queries already depend on.
+cd api && sqlx migrate run && cd ..
 ```
 
 Confirmed dependency versions (resolved, in `backend/Cargo.lock` — don't
 fight the resolver into something else without reason):
-`axum 0.7.9`, `sqlx 0.8.6`, `webauthn-rs 0.5.5`, `dashmap 6.2.1`,
-`tokio 1.x`, `tower-http 0.5`, `argon2 0.5`, `base64 0.22`.
+`axum 0.7.9`, `sqlx 0.8.6` (app) / `sqlx-cli 0.9.0` (separate tool, newer —
+that's fine, the CLI and the app's library dependency don't need to match),
+`webauthn-rs 0.5.5`, `dashmap 6.2.1`, `tokio 1.x`, `tower-http 0.5`,
+`argon2 0.5`, `base64 0.22`.
+
+**Known environment gotcha**: if `cargo build`/`cargo run` fails with
+`error: the compiler unexpectedly panicked` / `internal compiler error:
+reentrant incremental verify failure` — this is a corrupted incremental
+compilation cache, not your code. Fix: `rm -rf backend/target/debug/incremental`
+and rebuild. Seen once already (see git log around commit 743e833).
 
 **Barretenberg (`bb`) is NOT installed yet** — the Verification Engineer
 role needs it and will need to install it first (Aztec's installer, same
@@ -166,10 +184,14 @@ flags.
   backend depends on this crate by path for `session::SessionPolicy` et al.
   — not for storage (the backend stores opaque ciphertext the client
   already produced; it doesn't call `vault::encrypt`/`decrypt` itself).
-- **`backend/` schema** — `backend/api/migrations/0001_init.sql`. All 10
-  tables live and migrated: `users`, `webauthn_credentials`, `otp_codes`,
-  `sessions`, `vault_blobs`, `organizations`, `disclosure_requests`,
-  `proofs`, `used_nonces`, `audit_log`.
+- **`backend/` schema** — `backend/api/migrations/0001_init.sql` (10 tables:
+  `users`, `webauthn_credentials`, `otp_codes`, `sessions`, `vault_blobs`,
+  `organizations`, `disclosure_requests`, `proofs`, `used_nonces`,
+  `audit_log`) + `0002_audit_log_seq.sql` (adds `audit_log.seq`, a
+  bigserial — see that file and `git log 743e833` for why: `created_at`
+  alone isn't a safe total order for the hash chain under concurrent
+  writers, a real bug caught in independent verification of the audit
+  module, not just a test issue).
 - **`backend/api/src/auth/`** — passkey register/login (webauthn-rs),
   WhatsApp/SMS OTP fallback (provider trait + dev-logging impl), UAE Pass
   OIDC login (provider trait + stub adapter — no real sandbox credentials
@@ -178,85 +200,44 @@ flags.
 - **`backend/api/src/vault_sync/mod.rs`** — `GET/PUT/DELETE /vault`,
   `GET /vault/root`. Optimistic concurrency (`expected_version`) verified
   with real concurrent writes against Postgres (8 racing writers, exactly 1
-  wins — see `concurrent_cas_writes_only_one_winner_survives` test).
+  wins).
+- **`backend/api/src/disclosure/mod.rs`** — `disclosure_requests` lifecycle
+  (`POST/GET /disclosure-requests`, `GET /disclosure-requests/:id`,
+  `POST /disclosure-requests/:id/revoke`), lazy pending→expired flip.
+- **`backend/api/src/verify/mod.rs`** — `POST
+  /disclosure-requests/:id/proofs`, real `bb`-backed proof verification
+  (Barretenberg, `noir-recursive` target — chosen deliberately over
+  `-no-zk`, see the module's comments) against all 4 circuits' real
+  compiled ACIR, with per-circuit public-input layout confirmed against
+  each `circuits/<name>/src/main.nr` signature and the compiled ABI.
+  `used_nonces` replay defense verified with real concurrent-replay tests
+  (8 racing attempts at the same nonce, exactly 1 wins) — this table is
+  what `circuits/lib/src/time_bound.nr`'s design commits to; read that
+  file's comment block if you need the "why" again.
+- **`backend/api/src/orgs/mod.rs`** — org creation with a real API key
+  (shown once, only its hash stored), `OrgAuth` extractor (mirrors
+  `AuthUser`), `GET /orgs/:id/disclosure-requests` (backs
+  `EnterpriseBankView` in the wireframe). Disclosure/verify's earlier
+  `X-Org-Id` header-trust stub is gone — both modules use real `OrgAuth`
+  now, verified end-to-end (wrong org's key correctly 403s, not silently
+  treated as unauthenticated).
+- **`backend/api/src/audit/mod.rs`** — hash-chained append-only log,
+  global (not per-org — see the module's top comment for why), SHA-256,
+  framed to prevent concatenation-ambiguity collisions. Logs both proof
+  outcomes (valid AND invalid — an audit trail that only logs successes
+  isn't one) plus disclosure created/revoked. `GET /orgs/:id/audit-log`.
+  Chain-integrity genuinely verified (tamper a payload, confirm the hash
+  changes; confirmed real linkage against live Postgres) — see `git log
+  743e833` for a real ordering bug this uncovered and fixed after the
+  module's own author reported it as done.
 
-`cargo test` from `backend/`: **10/10 passing** as of this handoff.
+`cargo test` from `backend/`: **40/40 passing**, confirmed stable across 5
+consecutive default-parallelism runs (not just `--test-threads=1`) as of
+this handoff.
 
 ## Status: remaining work, in order
 
-### 1. Disclosure & Verification Engineer
-
-Two modules, build together since verification is meaningless without a
-request to verify against.
-
-**`backend/api/src/disclosure/mod.rs`** — the `disclosure_requests` +
-`used_nonces` lifecycle. Routes (org-authenticated — see note below on org
-auth, which doesn't exist yet: for this module, stub org auth as a
-`X-Org-Id: <uuid>` header you trust for now, and leave a clear `TODO: real
-org API-key auth, see orgs/ module` comment; don't block this module on
-orgs/ existing first):
-
-- `POST /disclosure-requests` — org creates one: `{ user_id, circuit_type,
-  policy: SessionPolicy, ttl_seconds }`. Generate a random nonce, set
-  `expires_at = now + ttl_seconds`, `status = 'pending'`.
-- `GET /disclosure-requests/:id` — fetch one (org that created it, or the
-  user it's for — `AuthUser` for the user path, the header stub for the org
-  path).
-- `GET /disclosure-requests?user_id=...&status=pending` — a user's pending
-  requests (this is what powers the wireframe's "Pending Request" card).
-- `POST /disclosure-requests/:id/revoke` — mark `revoked`, only by the org
-  that created it or the user it's for.
-- A background sweep or lazy-check that flips `pending` → `expired` past
-  `expires_at` (lazy check-on-read is fine for this pass — don't build a
-  cron job).
-
-**`backend/api/src/verify/mod.rs`** — proof verification.
-- `POST /disclosure-requests/:id/proofs` — body: `{ public_inputs: [...],
-  proof: base64 }`. Steps: look up the request (must be `pending`, not
-  expired), extract the nonce from `public_inputs` per that circuit's
-  public-input layout (see `circuits/<circuit_type>/src/main.nr` — the
-  `fn main(...)` signature tells you the public input order; e.g.
-  `emergency_session` has `current_time, vault_root, blood_type_hash,
-  key_meds_hash, allergies_commitment, user_public_key_x, user_public_key_y,
-  nonce` all marked `pub`), check `used_nonces` for `(org_id, nonce)` —
-  reject as `ApiError::Conflict` if already used (this IS the replay
-  defense `circuits/lib/src/time_bound.nr`'s design already commits to —
-  read that file's comment block, it explains exactly why this table exists
-  and what it's standing in for), shell out to `bb verify` against the
-  right circuit's verification key, insert into `used_nonces` and `proofs`,
-  flip the request to `fulfilled` on success.
-- You'll need a vkey per circuit — generate once at startup or on first use
-  via `bb write_vk` from each `circuits/<name>/target/<name>.json`, cache
-  the vkey files somewhere sane (e.g. `backend/api/vkeys/`, gitignored,
-  regenerated from `circuits/` rather than committed — they're a build
-  artifact of `circuits/`, not source).
-- Confirm the actual `bb` CLI surface empirically first (`bb --help`,
-  `bb write_vk --help`, `bb verify --help`) rather than assuming flag names.
-
-### 2. Orgs & Audit Engineer
-
-**`backend/api/src/orgs/mod.rs`** — relying-party accounts (banks, AI
-platforms, hospitals, government counters — matches `organizations.org_type`
-CHECK constraint). Real API-key auth this time (replace the disclosure
-module's header stub — go back and wire disclosure's routes to use this once
-it exists, note that explicitly in your report). Routes: create an org
-(returns a one-time-shown API key, store only its hash), an org-auth
-extractor (`OrgAuth` or similar, mirroring `AuthUser`'s pattern — read
-`auth/session_token.rs` for the extractor shape to match), list an org's
-disclosure requests + proof results (this is the data
-`EnterpriseBankView` in the wireframe needs — "Compliance Analyst Portal").
-
-**`backend/api/src/audit/mod.rs`** — hash-chained append-only log
-(`audit_log` table). `event_hash = H(event_type || ref_id || prev_hash ||
-payload)`, `prev_hash` = the previous row's `event_hash` (global chain, or
-per-org chain — your call, document which and why). Write an entry on every
-meaningful event from the modules above (disclosure created, proof verified,
-session revoked, etc. — go back and add the call sites in `disclosure/` and
-`verify/`, note that as part of this module's diff even though the files
-touched are elsewhere). Expose `GET /orgs/:id/audit-log` for the org to pull
-its own trail (backs the wireframe's STR-narrative audit story).
-
-### 3. Journeys writer
+### 1. Journeys writer
 
 `docs/journeys.md` — spec (not code) for UAE-resident user journeys beyond
 the two wireframed ones (bank AML/STR clearance, mortgage pre-approval).
@@ -271,7 +252,7 @@ icon/voice-guided, minimal reading required). This is a writing task, not an
 implementation task — sonnet-tier effort is fine, don't overthink model
 choice here.
 
-### 4. End-to-end verification pass
+### 2. End-to-end verification pass
 
 Once all of the above compiles and its own tests pass: register a fake org →
 create a disclosure request → hand-craft a proof using one of the circuits'
