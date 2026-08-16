@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memtara — cryptographic suitability proofs, companion to AIHOOTS</title>
+<meta name="description" content="A client's device proves it meets a structured product's suitability terms. The bank gets one bit and a proof. Real zero-knowledge proofs, not a whitepaper.">
+<meta property="og:title" content="Prove suitability. Audit every recommendation. Comply with DFSA COB 3.4.">
+<meta property="og:description" content="Memtara is the suitability companion to the AIHOOTS audit gateway. Real Baby Jubjub and Poseidon proofs. One command, about forty seconds, a sealed case file.">
+<meta property="og:type" content="website">
+<style>
+/* ------------------------------------------------------------------
+   Palette lives on :root so both themes resolve as a complete set.
+   Ground is a warm near-black; the single accent is signal amber and
+   is spent only on the verdict, the CTA, and the one number that
+   matters. Everything else is neutral on purpose.
+   ------------------------------------------------------------------ */
+:root {
+  --ground:    #faf8f5;
+  --surface:   #ffffff;
+  --sunken:    #f1ede7;
+  --ink:       #16181c;
+  --ink-soft:  #4a5058;
+  --ink-faint: #7c848e;
+  --rule:      #ddd7ce;
+  --accent:    #a86a12;
+  --accent-dim:#f0e2c9;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:    #101215;
+    --surface:   #171a1f;
+    --sunken:    #0b0d0f;
+    --ink:       #e2e6ea;
+    --ink-soft:  #a2abb5;
+    --ink-faint: #6d7680;
+    --rule:      #272c33;
+    --accent:    #e0a344;
+    --accent-dim:#2a2118;
+  }
+}
+:root[data-theme="dark"] {
+  --ground:    #101215;
+  --surface:   #171a1f;
+  --sunken:    #0b0d0f;
+  --ink:       #e2e6ea;
+  --ink-soft:  #a2abb5;
+  --ink-faint: #6d7680;
+  --rule:      #272c33;
+  --accent:    #e0a344;
+  --accent-dim:#2a2118;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 17px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 46rem; margin: 0 auto; padding: 0 1.5rem; }
+a { color: var(--ink); text-decoration-color: var(--accent); text-underline-offset: 3px; }
+a:hover { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+code { font-family: var(--mono); font-size: 0.88em; background: var(--sunken); padding: 0.1em 0.35em; border-radius: 3px; }
+
+/* --- masthead --- */
+.masthead { border-bottom: 1px solid var(--rule); }
+.masthead .wrap {
+  display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem;
+  align-items: baseline; justify-content: space-between;
+  padding-top: 1.25rem; padding-bottom: 1.25rem;
+}
+.wordmark { font-family: var(--mono); font-size: 0.95rem; letter-spacing: 0.02em; }
+.wordmark a { text-decoration: none; }
+.masthead nav { font-family: var(--mono); font-size: 0.8rem; display: flex; gap: 1.25rem; }
+.masthead nav a { color: var(--ink-soft); text-decoration: none; }
+.masthead nav a:hover { color: var(--accent); }
+
+/* --- hero --- */
+.hero { padding: 4.5rem 0 3rem; }
+.eyebrow {
+  font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.06em;
+  color: var(--ink-faint); margin: 0 0 1.5rem;
+}
+h1 {
+  font-family: var(--mono);
+  font-size: clamp(1.7rem, 5.2vw, 2.7rem);
+  line-height: 1.18; letter-spacing: -0.02em; font-weight: 600;
+  margin: 0 0 1.5rem; text-wrap: balance;
+}
+.lede { font-size: 1.1rem; color: var(--ink-soft); margin: 0 0 2rem; max-width: 40rem; }
+.lede strong { color: var(--ink); font-weight: 600; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.75rem; }
+.btn {
+  font-family: var(--mono); font-size: 0.85rem; text-decoration: none;
+  padding: 0.7rem 1.1rem; border: 1px solid var(--rule); border-radius: 4px;
+  display: inline-block;
+}
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #16110a; font-weight: 600; }
+.btn-primary:hover { color: #16110a; filter: brightness(1.08); }
+.btn-secondary:hover { border-color: var(--accent); }
+
+.proofstrip {
+  font-family: var(--mono); font-size: 0.76rem; line-height: 1.9;
+  color: var(--ink-faint); border-top: 1px solid var(--rule); padding-top: 1.25rem;
+}
+.proofstrip b { color: var(--ink-soft); font-weight: 600; }
+
+/* --- sections --- */
+section { padding: 3rem 0; border-top: 1px solid var(--rule); }
+h2 {
+  font-family: var(--mono); font-size: 1.15rem; font-weight: 600;
+  letter-spacing: -0.01em; margin: 0 0 1.25rem;
+}
+h3 { font-size: 1rem; margin: 0 0 0.4rem; font-weight: 650; }
+p { margin: 0 0 1.1rem; }
+p:last-child { margin-bottom: 0; }
+
+/* --- the numbered flow: these are a real sequence, so they are numbered --- */
+.flow { list-style: none; margin: 0; padding: 0; display: grid; gap: 1.75rem; }
+.flow li { display: grid; grid-template-columns: 2.5rem 1fr; gap: 1rem; }
+.flow .n {
+  font-family: var(--mono); font-size: 0.8rem; color: var(--accent);
+  padding-top: 0.2rem; font-variant-numeric: tabular-nums;
+}
+.flow p { color: var(--ink-soft); margin: 0; font-size: 0.97rem; }
+
+/* --- terminal --- */
+figure { margin: 0; }
+.term {
+  background: var(--sunken); border: 1px solid var(--rule); border-radius: 5px;
+  overflow-x: auto; margin: 0 0 0.75rem;
+}
+.term pre {
+  font-family: var(--mono); font-size: 0.76rem; line-height: 1.7;
+  margin: 0; padding: 1.1rem 1.25rem; color: var(--ink-soft); white-space: pre;
+}
+.term .ok  { color: var(--accent); }
+.term .hi  { color: var(--ink); }
+figcaption { font-size: 0.85rem; color: var(--ink-faint); }
+
+/* --- grid --- */
+.grid { display: grid; gap: 1.5rem 2rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+.grid p { font-size: 0.94rem; color: var(--ink-soft); margin: 0; }
+
+/* --- limits --- */
+.limits { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.9rem; }
+.limits li { padding-left: 1.4rem; position: relative; color: var(--ink-soft); font-size: 0.96rem; }
+.limits li::before {
+  content: "—"; position: absolute; left: 0; color: var(--ink-faint); font-family: var(--mono);
+}
+
+/* --- the honest block: the one place the accent surface is used --- */
+.honest {
+  background: var(--accent-dim); border-left: 3px solid var(--accent);
+  padding: 1.5rem 1.5rem; border-radius: 0 4px 4px 0;
+}
+.honest h2 { margin-bottom: 0.75rem; }
+.honest p { color: var(--ink-soft); }
+
+footer { border-top: 1px solid var(--rule); padding: 2.5rem 0 3.5rem; }
+footer p { font-family: var(--mono); font-size: 0.78rem; color: var(--ink-faint); line-height: 1.9; }
+
+@media (max-width: 34rem) {
+  body { font-size: 16px; }
+  .hero { padding: 3rem 0 2.25rem; }
+  .flow li { grid-template-columns: 1.75rem 1fr; gap: 0.75rem; }
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap">
+    <div class="wordmark"><a href="/">AIHOOTS</a> <span style="color:var(--ink-faint)">/ memtara</span></div>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#verify">Verify it</a>
+      <a href="#limits">Limits</a>
+      <a href="#contact">Talk to us</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<div class="wrap hero">
+  <p class="eyebrow">// the suitability companion to the AIHOOTS audit gateway</p>
+
+  <h1>Prove suitability.<br>Audit every recommendation.<br>Comply with DFSA COB 3.4.</h1>
+
+  <p class="lede">
+    A client's own device proves — against terms your risk committee registered
+    in advance — that income, liquid assets, risk tolerance and portfolio
+    concentration each clear a structured product's thresholds.
+    <strong>The bank receives one bit and a proof.</strong>
+    Real zero-knowledge proofs (Baby Jubjub / Poseidon), not a whitepaper.
+  </p>
+
+  <div class="actions">
+    <a class="btn btn-primary" href="https://github.com/prasantk8/memtara-zkp">Run the demo — one command</a>
+    <a class="btn btn-secondary" href="#contact">Book a 30-minute technical call</a>
+  </div>
+
+  <p class="proofstrip">
+    <b>87/87</b> Rust tests · <b>61/61</b> Noir tests · <b>134/134</b> Python tests<br>
+    real <code>nargo execute</code>, <code>bb prove</code>, <code>bb verify</code> — nothing simulated<br>
+    one command, about <b>40 seconds</b>, exit 0, a sealed case file at the end<br>
+    piloted by <b>0 banks</b>, and we say so on this page
+  </p>
+</div>
+
+<section id="problem">
+  <div class="wrap">
+    <h2>The file is assembled afterwards</h2>
+    <p>
+      An adviser recommends a structured note. Somebody checks the client
+      qualifies. Then the evidence of that check gets assembled later — from
+      screenshots, a spreadsheet, a CRM note, and somebody's memory of the
+      conversation.
+    </p>
+    <p>
+      Two years on, a client complains or a supervisor asks. The bank can show
+      that a file exists. What it cannot show is what was actually checked at
+      the moment the recommendation was made, against which thresholds, or that
+      the thresholds were not chosen by the person making the recommendation.
+    </p>
+    <p>
+      Put a model in that loop and it gets sharper. Ask an LLM to recommend a
+      product and it will do so from the prompt text alone — and prompt text is
+      attacker-controlled. A better prompt does not fix this. A verified fact
+      the model cannot invent does.
+    </p>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <ol class="flow">
+      <li>
+        <span class="n">01</span>
+        <div>
+          <h3>The bank registers the product</h3>
+          <p>
+            Instrument, risk level, minimum income, minimum liquidity, maximum
+            concentration — and a risk-committee approval flag. Thresholds come
+            from this registry and nowhere else. A request that supplies its own
+            is rejected with a 400, not quietly ignored.
+          </p>
+        </div>
+      </li>
+      <li>
+        <span class="n">02</span>
+        <div>
+          <h3>The client's device proves</h3>
+          <p>
+            Four private figures go into a Noir circuit as witnesses and never
+            leave the device. Out comes a proof and one bit. Proving
+            <code>income &gt;= X</code> needs the income, which is precisely why
+            no server can do this on the client's behalf.
+          </p>
+        </div>
+      </li>
+      <li>
+        <span class="n">03</span>
+        <div>
+          <h3>Memtara verifies and attests</h3>
+          <p>
+            Barretenberg verifies the proof against the registered terms, and a
+            short-lived Ed25519 attestation is signed. Anyone can check it
+            against a published JWKS, offline, without calling us.
+          </p>
+        </div>
+      </li>
+      <li>
+        <span class="n">04</span>
+        <div>
+          <h3>AIHOOTS injects and chains it</h3>
+          <p>
+            The gateway validates the attestation locally, injects the verified
+            fact into the model's context, and appends the proof hash to its own
+            tamper-evident SHA-256 chain — with no synchronous call back to
+            Memtara.
+          </p>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section id="verify">
+  <div class="wrap">
+    <h2>Watch it happen</h2>
+    <figure>
+      <div class="term"><pre><span class="hi">$ ./scripts/quickstart.sh</span>
+
+==&gt; [5]  The client's device generates a zero-knowledge proof
+  <span class="ok">+</span> nargo execute        witness generated
+  <span class="ok">+</span> bb prove             proof written, 16 kB
+
+==&gt; [6]  Memtara verifies the proof and issues a signed attestation
+  <span class="ok">+</span> bb verify            accepted
+  <span class="ok">+</span> verdict              suitable   (public input 11 of 12)
+  <span class="ok">+</span> attestation          EdDSA, expires in 300s
+
+==&gt; [7]  The claim is injected into the model's context, and logged
+  <span class="ok">+</span> AIHOOTS audit-verify chain intact
+
+==&gt; [9]  Exporting the Canonical Case File
+  <span class="ok">+</span> Case_File_20260815T220531Z.pdf      51,263 bytes
+  <span class="ok">+</span> seal verified
+
+==&gt; [10] What the bank now holds, and what it does not
+  holds        a proof, an attestation, a chained audit entry, a sealed PDF
+  <span class="hi">does not hold</span>  income, liquid assets, risk tolerance, holdings value
+
+<span class="ok">✅ CRO Demo Complete.</span> Show this to any Head of Digital Wealth.</pre></div>
+      <figcaption>
+        Abridged from a real run. Flip one byte in the PDF and
+        <code>memtara-export verify</code> exits 1.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2>What is actually in the box</h2>
+    <div class="grid">
+      <div>
+        <h3>Registry, not catalogue</h3>
+        <p>Thresholds live where the risk committee controls them, so the person making the recommendation cannot also set the bar it clears.</p>
+      </div>
+      <div>
+        <h3>A decline is evidence too</h3>
+        <p>The verdict is a public output of the circuit. "Not suitable" produces the same signed, chained, re-verifiable record as an approval.</p>
+      </div>
+      <div>
+        <h3>Canonical Case File</h3>
+        <p>One command exports a sealed PDF of the whole assessment — terms, proof digest, verification key, attestation, both audit chains.</p>
+      </div>
+      <div>
+        <h3>Tenant isolation you can test</h3>
+        <p>Every table is scoped by organisation, and a test fails the build if one bank can see another's registry or evidence.</p>
+      </div>
+      <div>
+        <h3>The vkey divergence check</h3>
+        <p><code>/health</code> returns 503 if the running verification key differs from the published one — a failure that otherwise has no symptom at all.</p>
+      </div>
+      <div>
+        <h3>Metrics without a tenant label</h3>
+        <p>Prometheus exposition with no organisation identifier, enforced by a test. A scrape endpoint with tenant labels is a customer directory.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="limits">
+  <div class="wrap">
+    <h2>What we do not claim</h2>
+    <ul class="limits">
+      <li>Memtara never receives the client's <em>financial figures</em>. It does hold account identifiers, including a mobile number, and an encrypted vault blob it cannot decrypt. Any vendor telling you their system with a users table holds no personal data has not read their own schema.</li>
+      <li>The case file's seal is a detached digest and signature, not a PAdES signature. No PDF reader will show a green tick. The strongest authenticity claim in the pack is the attestation, checkable against the published JWKS.</li>
+      <li>Whether a given artefact is admissible in a given forum is a question for your counsel. What we can say is that it is independently re-verifiable, years later, from a key published today.</li>
+      <li>No SOC 2, no ISO 27001, no independent penetration test, no production uptime history.</li>
+      <li>Neither system measures algorithmic bias or disparate impact. If you have that obligation, this does not discharge it.</li>
+      <li>A hash chain proves internal consistency, not availability. An operator with database access can still destroy a log.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="honest">
+      <h2>Piloted by 0 banks? Yes. Ready for your bank? Absolutely.</h2>
+      <p>
+        There are no customers, no case studies and no logos on this page,
+        because there is nothing to put there yet. What there is instead is a
+        repository you can clone this afternoon and a demo that either works on
+        your machine or does not.
+      </p>
+      <p>
+        The first two institutions get direct access to the people who built it,
+        terms that will not exist once there is a reference customer, and real
+        influence over what gets built next. That is the whole trade, and it is
+        the only moment it is on offer.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="contact">
+  <div class="wrap">
+    <h2>Check it before you talk to us</h2>
+    <p>
+      Clone it, run <code>./scripts/quickstart.sh</code>, and read
+      <code>docs/REGULATORY_MATRIX.md</code> — which names its four gaps on page
+      one, before any of the coverage. Then open
+      <code>README.md</code> and skip to "Honest limits".
+    </p>
+    <p>
+      If it holds up, a fifteen-minute call is the next step. If it does not,
+      we would rather hear which part.
+    </p>
+    <div class="actions" style="margin-top:1.5rem">
+      <a class="btn btn-primary" href="mailto:REPLACE-WITH-CONTACT@aihoots.com?subject=Memtara%20—%2015%20minutes">Book 15 minutes</a>
+      <a class="btn btn-secondary" href="https://github.com/prasantk8/memtara-zkp">Read the code</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>
+      Memtara is a companion to <a href="/">AIHOOTS</a>, the LLM audit gateway.<br>
+      Nothing on this page is legal advice, and no regulator has endorsed or
+      approved this software.<br>
+      DFSA COB 3.4 is the suitability obligation; attestation tokens emit the
+      legacy string <code>COB 3.1</code> for compatibility with relying parties
+      already matching it.<br>
+      Views and projects here are my own and unrelated to any employer's systems.
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

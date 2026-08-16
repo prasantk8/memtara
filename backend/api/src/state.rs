@@ -6,6 +6,9 @@ use crate::auth::otp::OtpProvider;
 use crate::auth::uae_pass::UaePassProvider;
 use crate::auth::webauthn::WebauthnCeremonies;
 use crate::config::Config;
+use crate::crypto::signer::IssuerKey;
+use crate::ops::metrics::Metrics;
+use crate::ops::rate_limit::RateLimiter;
 use sqlx::PgPool;
 use std::sync::Arc;
 use webauthn_rs::prelude::Webauthn;
@@ -27,4 +30,14 @@ pub struct AppState {
     /// UAE Pass OIDC client. `StubUaePassProvider` until real sandbox
     /// credentials exist.
     pub uae_pass_provider: Arc<dyn UaePassProvider>,
+    /// Ed25519 issuer key backing `/.well-known/jwks.json` and every proof
+    /// token. Loaded once at boot so the published JWKS and the key actually
+    /// signing tokens can never disagree.
+    pub signer: Arc<IssuerKey>,
+    /// Process-local counters behind `GET /metrics`. `Arc` rather than
+    /// cloned: every replica of this struct must increment the same numbers.
+    pub metrics: Arc<Metrics>,
+    /// Bounds `bb verify` invocations per user. Process-local by design —
+    /// see ops/rate_limit.rs for what that does and does not cover.
+    pub rate_limiter: Arc<RateLimiter>,
 }

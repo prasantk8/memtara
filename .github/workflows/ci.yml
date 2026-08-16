@@ -1,0 +1,255 @@
+name: CI
+
+# Fail-fast, in the order that puts the cheapest signal first: if the Rust
+# tests are broken there is no point paying for a Barretenberg install, and if
+# the circuits don't compile the handshake test cannot run at all.
+#
+# Two integration tests are the gates this pipeline exists for, and neither
+# property is observable from a unit test in either repository:
+#
+#   tests/test_aihoots_handshake.py        Memtara and AIHOOTS still integrate
+#                                          offline. A change to the token
+#                                          claims, the JWKS shape or the
+#                                          issuance route breaks it.
+#
+#   tests/test_wealth_suitability_e2e.py   The full cryptographic path still
+#                                          works: Baby Jubjub signing, Poseidon
+#                                          commitments, nargo execute, bb prove,
+#                                          and bb verify inside the real server.
+#                                          This is the only test that generates
+#                                          genuine proofs, so it is the only one
+#                                          that would notice the circuit, the
+#                                          curve constants or the public-input
+#                                          layout drifting.
+#
+#   tests/test_prover_cli.py               The deployable device prover still
+#                                          works as a subprocess — the contract
+#                                          a bank's mobile app integrates
+#                                          against, which an in-process test
+#                                          could not catch breaking.
+#
+#   scripts/demo_cro_workflow.py           The whole product, one command. Run
+#                                          as a smoke test because it is the
+#                                          artefact shown to buyers, and a demo
+#                                          that broke three commits ago is
+#                                          worse than no demo.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  DATABASE_URL: postgres://memtara:memtara@localhost:5433/memtara
+  NARGO_VERSION: 1.0.0-beta.26
+  BB_VERSION: "5.1.0"
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: memtara
+          POSTGRES_PASSWORD: memtara
+          POSTGRES_DB: memtara
+        ports:
+          # 5433 to match the local dev convention in HANDOFF.md, so the same
+          # DATABASE_URL works in both places and nobody has to remember which
+          # port applies where.
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U memtara"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The handshake test imports AIHOOTS's real gateway, audit chain and
+          # verifier from this submodule. Without it the test can only skip,
+          # and a silently-skipping integration gate is worse than none.
+          submodules: recursive
+
+      - name: Fail if the AIHOOTS submodule is empty
+        run: |
+          test -f tests/aihoots_reference/src/gateway/audit/chain.py \
+            || { echo "AIHOOTS submodule did not check out"; exit 1; }
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: cargo fmt
+        working-directory: backend
+        run: cargo fmt --all -- --check
+        continue-on-error: true  # formatting is advisory; correctness below is not
+
+      - name: cargo test
+        working-directory: backend
+        run: cargo test --all
+
+      - name: Install Noir (nargo)
+        run: |
+          curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+          echo "$HOME/.nargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.nargo/bin/noirup" -v "$NARGO_VERSION"
+
+      - name: Compile circuits
+        working-directory: circuits
+        run: |
+          nargo --version
+          nargo compile --workspace --skip-brillig-constraints-check
+          nargo test --workspace
+
+      - name: Install Barretenberg (bb)
+        run: |
+          curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/bbup/install | bash
+          "$HOME/.bb/bbup" -v "$BB_VERSION"
+          echo "$HOME/.bb" >> "$GITHUB_PATH"
+
+      - name: Confirm bb is usable
+        run: bb --version
+
+      - name: Check the committed wealth vkey still matches the circuit
+        # `circuits/wealth_suitability/vkey/vk` is the one verification key in
+        # this repo that is committed rather than generated at boot, because a
+        # DFSA examiner has to be able to re-verify a suitability proof without
+        # trusting anyone's build pipeline (see that directory's README).
+        #
+        # A committed build artefact rots silently, so regenerate it and
+        # compare. If this step fails, the circuit changed and every proof in
+        # the field now verifies against a key nobody published.
+        run: |
+          bb write_vk -b circuits/target/wealth_suitability.json \
+                      -o /tmp/wealth-vkey -t noir-recursive
+          diff /tmp/wealth-vkey/vk circuits/wealth_suitability/vkey/vk \
+            || { echo "::error::circuits/wealth_suitability/vkey/vk is stale — regenerate and commit"; exit 1; }
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # ------------------------------------------------------------------
+      # The gate. If Memtara and AIHOOTS have stopped integrating, the build
+      # fails here — no `continue-on-error`, no soft skip.
+      # ------------------------------------------------------------------
+      - name: End-to-end Memtara <-> AIHOOTS handshake
+        run: pytest tests/test_aihoots_handshake.py -v
+
+      # ------------------------------------------------------------------
+      # The second gate: the DFSA suitability journey, with proofs that are
+      # actually generated rather than stood in for. This is the only test in
+      # the repository that exercises the full cryptographic path — Baby
+      # Jubjub signing, Poseidon commitments, `nargo execute`, `bb prove`, and
+      # `bb verify` inside the real server — so it is also the only one that
+      # would notice a change to any of them.
+      # ------------------------------------------------------------------
+      - name: End-to-end structured-product suitability (real ZK proofs)
+        run: pytest tests/test_wealth_suitability_e2e.py -v
+
+      # ------------------------------------------------------------------
+      # The device prover, exercised the way an embedder uses it: spawned as
+      # a subprocess, with its stdout parsed. An in-process call would not
+      # catch a stray print polluting the JSON, which is the failure that
+      # would actually break someone's mobile integration.
+      # ------------------------------------------------------------------
+      - name: Device prover CLI end-to-end
+        run: pytest tests/test_prover_cli.py -v
+
+      - name: Offline unit tests (PDF writer, evidence exporter, AIHOOTS adapter)
+        run: |
+          pytest tests/test_pdf_writer.py tests/test_evidence_exporter.py \
+                 tests/test_aihoots_adapter.py -v
+
+      - name: Fail if any integration gate skipped instead of running
+        # `pytest.skip` on a missing prerequisite is right for a laptop and
+        # wrong for CI: a pipeline that goes green because the integration
+        # never ran is exactly the failure this job is meant to prevent.
+        run: |
+          pytest tests/test_aihoots_handshake.py tests/test_wealth_suitability_e2e.py \
+                 tests/test_prover_cli.py \
+            -q --no-header -rs 2>&1 | tee /tmp/integration.txt
+          if grep -qE "[0-9]+ skipped" /tmp/integration.txt; then
+            echo "::error::integration tests were SKIPPED — a prerequisite is missing in CI"
+            grep -E "SKIPPED|skipped" /tmp/integration.txt || true
+            exit 1
+          fi
+
+      # ------------------------------------------------------------------
+      # The buyer-facing artefact. Asserting only on the exit code is
+      # deliberate: the demo prints a narrative that will be edited often, and
+      # a test pinned to its wording would be changed rather than heeded. What
+      # must not change is that it runs, end to end, producing a real proof and
+      # a sealed case file.
+      # ------------------------------------------------------------------
+      - name: CRO demo smoke test
+        run: |
+          python scripts/demo_cro_workflow.py --no-colour --output-dir /tmp/cro_demo
+          test -s /tmp/cro_demo/Case_File_*.pdf \
+            || { echo "::error::the demo exited 0 but produced no case file"; exit 1; }
+
+      - name: Commercial assets still run
+        # The quickstart is the first thing a prospective buyer executes and the
+        # ROI calculator is the thing shown in the meeting. Both import nothing
+        # and take under a second to check, and both would otherwise rot
+        # silently — a broken quickstart is only discovered by the one person
+        # you least want discovering it.
+        run: |
+          bash -n scripts/quickstart.sh
+          ./scripts/quickstart.sh --help >/dev/null
+          python scripts/roi_calculator.py --defaults >/dev/null
+          python scripts/roi_calculator.py --tier desk --products-per-year 2500 --json \
+            | python -c 'import json,sys; d=json.load(sys.stdin)["result"]; assert d["conservative_annual_benefit"] > 0'
+
+      - name: Regenerate the compliance demonstration and check it is committed
+        # The report is a build artefact of the code. If someone changes a
+        # predicate, a clause mapping or a claim name without regenerating,
+        # the committed document is quietly wrong — which for a compliance
+        # artefact is the worst kind of wrong.
+        run: |
+          python scripts/generate_regulatory_demo.py
+          git diff --exit-code docs/REGULATORY_DEMO_REPORT.md \
+            || { echo "::error::REGULATORY_DEMO_REPORT.md is stale — run scripts/generate_regulatory_demo.py and commit"; exit 1; }
+
+      - name: Check the demo script's predicate table against the running server
+        run: |
+          MEMTARA_PRIVATE_KEY="$(python -c 'import base64;print(base64.b64encode(bytes(range(32))).decode())')" \
+          BIND_ADDR=127.0.0.1:8099 \
+          MEMTARA_ISSUER_BASE_URL=http://127.0.0.1:8099 \
+            backend/target/debug/memtara-api &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8099/healthz >/dev/null && break
+            sleep 1
+          done
+          python scripts/generate_regulatory_demo.py --check-against http://127.0.0.1:8099 --out /tmp/drift-check.md
+
+      - name: Upload the compliance package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-package
+          path: |
+            docs/REGULATORY_MATRIX.md
+            docs/REGULATORY_DEMO_REPORT.md
+            docs/openapi.yaml
+            circuits/wealth_suitability/vkey/
+            /tmp/cro_demo/
+          if-no-files-found: error

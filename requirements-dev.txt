@@ -1,0 +1,23 @@
+# Python side of the Memtara <-> AIHOOTS integration: the two integration
+# tests, the device-side prover, and the compliance-report generator. The
+# backend itself is Rust and needs none of this.
+#
+# Locally:  python3 -m venv --system-site-packages .venv
+#           .venv/bin/pip install -r requirements-dev.txt
+#
+# `clients/wealth_client.py` deliberately adds nothing to this list. It does
+# Baby Jubjub arithmetic with Python integers and delegates every hash to the
+# circuits' own Poseidon via `nargo` — so the device side has no cryptographic
+# dependency that could disagree with the verifier. What it does need is
+# `nargo` and `bb` on PATH, which pip cannot supply; see README.
+
+pytest==8.3.4
+httpx==0.28.1
+cryptography>=42,<51     # Ed25519 verification (integrations/aihoots)
+pg8000==1.31.5           # pure-Python Postgres driver; seeds the verified-proof row
+faker==40.36.0           # synthetic UAE resident profiles for the demo report
+
+# Pulled in because the handshake test runs AIHOOTS's real FastAPI gateway
+# in-process. Kept in step with tests/aihoots_reference/requirements.txt.
+fastapi==0.115.6
+pydantic-settings==2.7.1

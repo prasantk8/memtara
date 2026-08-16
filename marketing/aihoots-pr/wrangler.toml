@@ -1,0 +1,46 @@
+#  AIHOOTS marketing site — Cloudflare Pages
+#  ---------------------------------------------------------------------------
+#  This is a *Pages* configuration, not a *Workers* one. The distinction is not
+#  cosmetic, so it is worth two paragraphs before anyone "fixes" this file.
+#
+#  A Workers config declares `main = "src/worker.js"` and a `routes` table. If
+#  those keys are present, wrangler treats the project as a Worker: it looks for
+#  an entry script, and `wrangler pages deploy` refuses the directory. A Pages
+#  config declares `pages_build_output_dir` and nothing else about routing —
+#  Pages serves the directory, and custom domains are attached to the *project*,
+#  not declared in this file. There is no `routes = [...]` key that Pages reads.
+#
+#  There is deliberately no `src/worker.js` in this repository. For a static
+#  site it is redundant, and a `_worker.js` landing in the output directory
+#  takes over routing for every request — which is how a one-file marketing
+#  site acquires a 500 error that nobody can reproduce locally. If you later
+#  need edge logic (redirects with state, A/B, auth), add Pages Functions under
+#  `functions/` rather than resurrecting a Worker entrypoint.
+#
+#  Custom domains: see DEPLOY.md. `wrangler pages project` only supports
+#  `list`, `create` and `delete` — verified against wrangler 4.123.0. There is
+#  no `add-domain` subcommand; the dashboard or the REST API is the route.
+
+name = "aihoots-landing"
+
+# The directory `wrangler pages deploy` uploads. Contains index.html (the
+# AIHOOTS platform page), memtara.html (the ZK engine detail page) and
+# _headers. Path is relative to this file.
+pages_build_output_dir = "./public"
+
+# Only consulted by Pages Functions. Harmless for a purely static deploy, and
+# worth pinning now so that adding a function later does not silently pick up
+# whatever runtime semantics are current on that day.
+compatibility_date = "2026-08-16"
+
+# No environment variables. The site is static by design: nothing here reads a
+# secret, calls an API, or knows anything it would have to be told at runtime.
+# If that stops being true, note that Pages `[vars]` are public — they are
+# readable by anyone who can reach the site. Secrets go in
+# `wrangler pages secret`, never here.
+[vars]
+
+# `[env.production]` in Pages scopes *variables and bindings*, not routes.
+# Left empty rather than deleted so the shape is obvious when the first real
+# binding needs to be added.
+[env.production.vars]

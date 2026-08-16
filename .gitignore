@@ -2,6 +2,15 @@
 /circuits/target/
 **/target/
 
+# Per-invocation prover inputs written by clients/wealth_client.py. These are
+# witnesses — they contain the plaintext figures a proof is generated from,
+# which is exactly the material that must never leave a device. They are
+# deleted immediately after use; this is the second line of defence in case a
+# run is interrupted between writing and cleaning up.
+/circuits/*/Prover*.toml
+/circuits/*/prover_*.toml
+/circuits/*/oracle_*.toml
+
 # Rust (memtara-vault is a library crate; lockfile isn't committed by convention)
 /vault/target/
 /vault/Cargo.lock
@@ -12,3 +21,21 @@
 # Backend: per-circuit bb verification keys — a build artifact of
 # circuits/, regenerated at boot by verify::ensure_vkeys, not source.
 /backend/api/vkeys/
+
+# Python venv for the AIHOOTS integration test + demo generator
+/.venv/
+__pycache__/
+.pytest_cache/
+
+# Local secrets (see .env.example)
+.env
+
+# Scratch chain written by scripts/generate_regulatory_demo.py
+/docs/.demo-audit.jsonl
+
+# The CRO demo's working directory. Contains `client_42_vault.json`, which
+# holds a Baby Jubjub signing key and four plaintext figures — synthetic, but
+# the file format is the real one, and a committed example is how a real one
+# eventually gets committed too. Also holds generated case files, which are
+# artefacts of a run rather than source.
+/cro_demo/

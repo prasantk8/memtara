@@ -30,6 +30,13 @@ sha2 = "0.10"
 argon2 = "0.5"
 base64 = "0.22"
 
+# Ed25519 signing for the proof tokens AIHOOTS validates offline against
+# /.well-known/jwks.json (crypto/signer.rs). Deliberately a raw signature
+# crate rather than a JWT library: the EdDSA JWS serialization is ~20 lines
+# and hand-writing it keeps the exact bytes we sign visible at the call
+# site, which is the part a regulator's reviewer actually needs to check.
+ed25519-dalek = "2"
+
 anyhow = "1.0"
 thiserror = "1.0"
 

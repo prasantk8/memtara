@@ -1,0 +1,1334 @@
+openapi: 3.1.0
+
+info:
+  title: Memtara API
+  version: 0.1.0
+  summary: Zero-knowledge attribute disclosure, and the signed attestations that carry its verdicts off-platform.
+  description: |
+    Memtara lets a consumer prove a *predicate* about themselves — income above a
+    threshold, residency valid, no sanctions match — without disclosing the
+    attribute behind it. Proofs are generated on the holder's device against one
+    of four Noir circuits; this API authenticates users, syncs the encrypted
+    vault, orchestrates the disclosure-request lifecycle, verifies submitted
+    proofs against the real compiled circuits via Barretenberg, and issues
+    short-lived Ed25519-signed attestations that any JOSE-speaking relying party
+    can validate offline.
+
+    **This API never generates proofs.** Generating one requires the plaintext
+    attribute as a witness, so a server that could prove would be a server that
+    holds plaintext. See `ARCHITECTURE.md`. Every "verified" verdict here comes
+    from running the real circuit's verifier over bytes a client produced.
+
+    **Compliance context.** `docs/REGULATORY_MATRIX.md` maps this system, clause
+    by clause, against the CBUAE *Guidance Note on Consumer Protection and the
+    Responsible Adoption and Use of AI and ML by LFIs* (`CBUAE_EN_6958_VER1`).
+    Predicate responses carry the clause ids each disclosure is evidence for.
+  license:
+    name: See repository
+  contact:
+    name: Memtara
+    url: https://github.com/prasantk8
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://api.memtara.ai
+    description: Production (illustrative — set MEMTARA_ISSUER_BASE_URL to match)
+
+tags:
+  - name: Identity
+    description: The issuer's public signing key. Unauthenticated by design.
+  - name: Proof issuance
+    description: Turning a verified ZK proof into a signed, offline-verifiable attestation.
+  - name: Structured-product suitability
+    description: |
+      DFSA Conduct of Business suitability, evidenced by a proof rather than a
+      filing cabinet. Separate from Proof issuance because this circuit answers
+      a question rather than asserting one — its verdict is a public output
+      that must be read, and its thresholds must be checked against terms the
+      firm registered in advance.
+  - name: Disclosure
+    description: The org-initiated "please prove X to me" lifecycle.
+  - name: Verification
+    description: Checking a submitted proof against a circuit's verification key.
+  - name: Auth
+    description: Passkey, OTP and UAE Pass login.
+  - name: Vault
+    description: Encrypted blob sync. The server never holds the decryption key.
+  - name: Organizations
+    description: Relying-party accounts and their audit trail.
+  - name: Product registry
+    description: |
+      A bank's catalogue of structured products and the suitability terms each
+      is sold against. Exists so that the person making a recommendation is not
+      the person who chooses the bar it is measured against — see the header of
+      `backend/api/src/products/mod.rs`.
+  - name: Operations
+    description: |
+      Health and metrics, for operators rather than banks. Unauthenticated, and
+      deliberately carrying no tenant-identifying label.
+
+security:
+  - sessionToken: []
+
+paths:
+
+  /.well-known/jwks.json:
+    get:
+      tags: [Identity]
+      summary: This deployment's public signing key, as a JWK Set
+      description: |
+        RFC 8037 OKP/Ed25519 key in RFC 7517 JWK Set form. A relying party
+        fetches this once, caches it by `kid`, and validates every proof token
+        locally — there is no synchronous call back to Memtara at validation
+        time, which is what makes the integration zero-latency.
+
+        Deliberately unauthenticated: a public key is public, and requiring a
+        credential to fetch it would defeat offline validation.
+      security: []
+      responses:
+        "200":
+          description: The JWK Set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JwkSet"
+              example:
+                keys:
+                  - kty: OKP
+                    crv: Ed25519
+                    x: 11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo
+                    use: sig
+                    alg: EdDSA
+                    kid: kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k
+
+  /api/v1/predicates:
+    get:
+      tags: [Proof issuance]
+      summary: The closed set of predicates this deployment will attest to
+      description: |
+        A published contract. `POST /api/v1/issue-proof` rejects any predicate
+        not in this list, so a typo fails at the boundary rather than producing
+        a valid-looking token asserting something nobody defined.
+      security: []
+      responses:
+        "200":
+          description: The predicate catalogue.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PredicateCatalogueEntry"
+              example:
+                - predicate: income_gte_threshold
+                  circuit: tax_session
+                  cbuae_clauses: ["5(c)", "5(d)", "4(a)"]
+                  dfsa_rules: []
+                  endpoint: /api/v1/issue-proof
+                  description: Income meets or exceeds the requested threshold; the income itself is not disclosed.
+                - predicate: structured_product_suitable
+                  circuit: wealth_suitability
+                  cbuae_clauses: ["5(c)", "5(d)", "4(a)"]
+                  dfsa_rules: ["COB 3.1"]
+                  endpoint: /api/v1/submit-wealth-proof
+                  description: Income, liquidity, risk tolerance and concentration assessed against a product's registered terms. One bit out.
+
+  /api/v1/issue-proof:
+    post:
+      tags: [Proof issuance]
+      summary: Issue a signed attestation that a predicate was proven
+      description: |
+        Two request shapes, both real circuit evaluations:
+
+        * **Fresh** — supply `disclosure_request_id`, `public_inputs` and
+          `proof`. The proof is checked against the circuit's verification key
+          via `bb verify` right now, the request's nonce is consumed, and a
+          token is issued only on a genuine cryptographic pass.
+        * **Attested** — omit `public_inputs` and `proof`. The most recent proof
+          that already passed verification for this `(user, circuit)` pair is
+          re-attested. This exists because a proof is single-use by design (its
+          nonce is burned), while a bank may legitimately need a second token
+          for the same verified fact inside one onboarding session.
+
+        Both paths write a `proof_token_issued` event, carrying the
+        `regulatory_audit_id` and which path was taken, to the hash-chained
+        audit log.
+
+        **The issued token cannot be revoked inside its lifetime.** That is the
+        deliberate cost of offline validation; see the §6(f) caveat in
+        `docs/REGULATORY_MATRIX.md`. Revoke the disclosure request before
+        issuance, or the user's session to prevent re-issuance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IssueProofRequest"
+            examples:
+              fresh:
+                summary: Fresh evaluation against a pending disclosure request
+                value:
+                  user_id: 8f14e45f-ceea-467a-9f2a-1c1b2f3d4e5a
+                  predicate: income_gte_threshold
+                  disclosure_request_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+                  public_inputs: ["0x66c1e0a0", "0x66c1e6e0", "0x1a2b…", "0x0f4240", "0x1e8480", "0x…", "0x…", "0x…"]
+                  proof: bXktcHJvb2YtYnl0ZXM
+              attested:
+                summary: Re-attest a proof this user already had verified
+                value:
+                  user_id: 8f14e45f-ceea-467a-9f2a-1c1b2f3d4e5a
+                  predicate: residency_valid
+      responses:
+        "200":
+          description: Attestation issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueProofResponse"
+        "400":
+          description: |
+            Unknown predicate; `public_inputs`/`proof` supplied without each
+            other; wrong public-input arity; nonce mismatch; the disclosure
+            request is for a different circuit than the predicate requires; or
+            the proof failed cryptographic verification (no token is minted, and
+            the failure is itself recorded).
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: No such disclosure request.
+          $ref: "#/components/responses/Error"
+        "409":
+          description: |
+            The disclosure request is no longer pending; the nonce has already
+            been consumed; or (attested path) no verified proof exists for this
+            user and circuit.
+          $ref: "#/components/responses/Error"
+
+  /api/v1/issue-wealth-request:
+    post:
+      tags: [Structured-product suitability]
+      summary: Open a suitability assessment and fix its terms (org)
+      security:
+        - orgApiKey: []
+      description: |
+        The firm's half of a DFSA suitability assessment. Registers the
+        product's terms, mints a single-use nonce, and returns the 12-element
+        public-input template the client's device must fill.
+
+        **The ordering is the security argument.** The thresholds are public
+        inputs to the circuit, and *every* value of them yields a valid proof —
+        a client that could choose its own `min_income` could prove itself
+        suitable for anything, with cryptography that verifies perfectly. Only
+        the comparison in `POST /api/v1/submit-wealth-proof` against terms
+        registered *here*, before the client was asked, makes the verdict mean
+        anything.
+
+        **The terms are no longer accepted here.** They are read from the
+        product registry (`POST /api/v1/products`), which closes the other half
+        of the same hole: whoever holds the org key could otherwise open an
+        assessment with `min_income: 0` and receive a signed, cryptographically
+        impeccable attestation that the client cleared a bar nobody set. A
+        request that still supplies `min_income`, `min_liquidity`,
+        `max_concentration_percent` or `product_risk_level` is **rejected**
+        rather than having them ignored — an integration that sends them
+        believes it is setting them, and that belief is worth surfacing once
+        instead of leaving latent.
+
+        The product must exist in *this org's* registry and must have
+        `approved_by_risk_committee: true`. An assessment against an unapproved
+        instrument produces evidence that a controlled process was followed when
+        it was not, which is worse than producing no evidence at all.
+
+        The terms are **snapshotted** onto the request. Amending the product
+        afterwards does not reach back into assessments already open.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IssueWealthRequest"
+      responses:
+        "201":
+          description: Assessment opened.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssueWealthRequestResponse"
+        "400":
+          description: |
+            Malformed ISIN; suitability terms supplied in the body (they come
+            from the registry); or a `ttl_seconds` outside 60-86400.
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: |
+            No such user, or the product is not in this organisation's
+            registry. The message says which.
+          $ref: "#/components/responses/Error"
+        "409":
+          description: The product has not been approved by the risk committee.
+          $ref: "#/components/responses/Error"
+
+  /api/v1/submit-wealth-proof:
+    post:
+      tags: [Structured-product suitability]
+      summary: Answer a suitability assessment with a proof
+      description: |
+        The client's half. Authorised by either the org that opened the request
+        or the user it is for.
+
+        Checks, in order, before anything is signed:
+
+        1. every submitted public input matches the terms the org registered;
+        2. `current_time` falls inside the server's assessment window;
+        3. `vault_root` equals the root this user actually synced via
+           `PUT /vault` — without which the circuit's Merkle limb proves only
+           that the figures are consistent with *some* tree, and a client can
+           build one to order;
+        4. `bb verify` against the `wealth_suitability` verification key, with
+           the nonce consumed atomically on a pass;
+        5. **public input 11 is read.**
+
+        Step 5 is not optional. `bb verify` answers "was this proof correctly
+        constructed", not "is the client suitable" — a proof that the client
+        *failed* verifies exactly as cleanly as one that they passed. A token
+        is issued either way, carrying the real verdict in `suitable`; a
+        declined recommendation needs its evidence as much as an approved one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitWealthProofRequest"
+      responses:
+        "200":
+          description: |
+            Assessment complete. Check `suitable` — a `200` means the proof
+            verified, not that the client qualified.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmitWealthProofResponse"
+        "400":
+          description: |
+            Public inputs disagree with the registered terms; `current_time`
+            outside the window; `vault_root` is not this user's committed root;
+            wrong arity; nonce mismatch; the proof failed verification; or the
+            circuit output was neither 0 nor 1.
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: No such suitability request.
+          $ref: "#/components/responses/Error"
+        "409":
+          description: |
+            Already assessed; the nonce has been consumed; or the user has no
+            synced vault to check the assessment against.
+          $ref: "#/components/responses/Error"
+
+  /disclosure-requests:
+    post:
+      tags: [Disclosure]
+      summary: Create a disclosure request (org)
+      security:
+        - orgApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDisclosureRequest"
+      responses:
+        "201":
+          description: |
+            Created. The returned `nonce` is the exact value the client must
+            embed as the circuit's `nonce` public input.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DisclosureRequest"
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404":
+          description: No such user.
+          $ref: "#/components/responses/Error"
+    get:
+      tags: [Disclosure]
+      summary: List the authenticated user's own disclosure requests
+      parameters:
+        - name: user_id
+          in: query
+          schema: { type: string, format: uuid }
+          description: |
+            Optional, and if given must equal the caller's own id — a different
+            value is rejected rather than silently ignored.
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/DisclosureStatus"
+      responses:
+        "200":
+          description: The caller's requests, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DisclosureRequestSummary"
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /disclosure-requests/{id}:
+    get:
+      tags: [Disclosure]
+      summary: Fetch one disclosure request
+      description: Readable by the org that created it or the user it is for.
+      security:
+        - sessionToken: []
+        - orgApiKey: []
+      parameters: [{ $ref: "#/components/parameters/DisclosureRequestId" }]
+      responses:
+        "200":
+          description: The request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DisclosureRequest" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /disclosure-requests/{id}/revoke:
+    post:
+      tags: [Disclosure]
+      summary: Revoke a pending disclosure request
+      description: |
+        Takes effect immediately. This is the revocable primitive that CBUAE
+        §6(f) ("clear and immediate ability, with human intervention, to cease
+        use") is satisfied by — not the proof token, which is short-lived and
+        non-revocable by design.
+      security:
+        - sessionToken: []
+        - orgApiKey: []
+      parameters: [{ $ref: "#/components/parameters/DisclosureRequestId" }]
+      responses:
+        "200":
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string, example: revoked }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: Already fulfilled, expired or revoked.
+          $ref: "#/components/responses/Error"
+
+  /disclosure-requests/{id}/proofs:
+    post:
+      tags: [Verification]
+      summary: Submit a proof against a disclosure request
+      description: |
+        Runs `bb verify` against the circuit's verification key. On a genuine
+        pass the nonce is consumed atomically, the proof is recorded, and the
+        request flips to `fulfilled`.
+
+        A cryptographically invalid proof returns `201` with `valid: false`: it
+        is recorded for the audit trail but does **not** consume the nonce or
+        change the request's status, so a third party cannot burn the legitimate
+        holder's one-shot grant.
+      security:
+        - sessionToken: []
+        - orgApiKey: []
+      parameters: [{ $ref: "#/components/parameters/DisclosureRequestId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmitProofRequest" }
+      responses:
+        "201":
+          description: Proof recorded. Check `valid` — this status does not mean the proof passed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubmitProofResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: Request not pending, or nonce already consumed.
+          $ref: "#/components/responses/Error"
+
+  /orgs:
+    post:
+      tags: [Organizations]
+      summary: Register a relying party
+      description: The API key is returned once, at creation, and only its hash is stored.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, org_type]
+              properties:
+                name: { type: string }
+                org_type: { $ref: "#/components/schemas/OrgType" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  name: { type: string }
+                  org_type: { $ref: "#/components/schemas/OrgType" }
+                  api_key:
+                    type: string
+                    description: Shown once. Not recoverable.
+
+  /orgs/{id}/disclosure-requests:
+    get:
+      tags: [Organizations]
+      summary: An org's own disclosure requests
+      security: [{ orgApiKey: [] }]
+      parameters: [{ $ref: "#/components/parameters/OrgId" }]
+      responses:
+        "200":
+          description: The org's requests.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DisclosureRequestSummary" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /orgs/{id}/audit-log:
+    get:
+      tags: [Organizations]
+      summary: This org's slice of the hash-chained audit log
+      description: |
+        Rows whose `ref_id` names one of this org's disclosure requests. The
+        chain itself is global (it commits to the true interleaving across all
+        orgs, which is strictly stronger than per-org chains); this endpoint
+        filters the view, not the chain.
+      security: [{ orgApiKey: [] }]
+      parameters: [{ $ref: "#/components/parameters/OrgId" }]
+      responses:
+        "200":
+          description: Audit entries in chain order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AuditEntry" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /vault:
+    get:
+      tags: [Vault]
+      summary: Download the encrypted vault blob
+      responses:
+        "200":
+          description: |
+            Ciphertext and version. The server cannot decrypt this — the key is
+            derived on the holder's device and never transmitted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VaultBlob" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [Vault]
+      summary: Upload the encrypted vault blob
+      description: |
+        Compare-and-swap on `expected_version` — a stale version is rejected
+        rather than silently overwriting a concurrent write from another device.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ciphertext, vault_root, expected_version]
+              properties:
+                ciphertext: { type: string, description: base64url-no-pad AES-256-GCM ciphertext }
+                vault_root: { type: string, description: base64url-no-pad Poseidon commitment }
+                expected_version: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Error" }
+        "409":
+          description: Version conflict — re-read and retry.
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Vault]
+      summary: Delete the stored vault blob
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /vault/root:
+    get:
+      tags: [Vault]
+      summary: The vault's current Merkle root and version
+      responses:
+        "200":
+          description: Root commitment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  vault_root: { type: string }
+                  version: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /auth/passkey/register/start:
+    post:
+      tags: [Auth]
+      summary: Begin WebAuthn registration
+      security: []
+      responses:
+        "200": { description: A WebAuthn `PublicKeyCredentialCreationOptions` challenge. }
+
+  /auth/passkey/register/finish:
+    post:
+      tags: [Auth]
+      summary: Complete WebAuthn registration
+      security: []
+      responses:
+        "200": { description: A session token. }
+
+  /auth/passkey/login/start:
+    post:
+      tags: [Auth]
+      summary: Begin WebAuthn authentication
+      security: []
+      responses:
+        "200": { description: A WebAuthn `PublicKeyCredentialRequestOptions` challenge. }
+
+  /auth/passkey/login/finish:
+    post:
+      tags: [Auth]
+      summary: Complete WebAuthn authentication
+      security: []
+      responses:
+        "200": { description: A session token. }
+
+  /auth/otp/request:
+    post:
+      tags: [Auth]
+      summary: Send an OTP over SMS or WhatsApp
+      description: Fallback and recovery path; also the practical route for low-digital-literacy journeys.
+      security: []
+      responses:
+        "202": { description: Dispatched. }
+
+  /auth/otp/verify:
+    post:
+      tags: [Auth]
+      summary: Exchange an OTP for a session token
+      security: []
+      responses:
+        "200": { description: A session token. }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /auth/uae-pass/start:
+    get:
+      tags: [Auth]
+      summary: Begin UAE Pass (OIDC) login
+      description: |
+        The flow, callback handling and account linking are real; the IdP call
+        itself is a stub adapter until government sandbox credentials exist.
+      security: []
+      responses:
+        "302": { description: Redirect to the UAE Pass authorize endpoint. }
+
+  /auth/uae-pass/callback:
+    get:
+      tags: [Auth]
+      summary: UAE Pass OIDC callback
+      security: []
+      responses:
+        "200": { description: A session token. }
+
+  /api/v1/products:
+    post:
+      tags: [Product registry]
+      summary: Register a structured product and its suitability terms
+      security:
+        - orgApiKey: []
+      description: |
+        Scoped to the calling org. Two banks may register the same ISIN
+        independently, on different terms, and neither can see the other's —
+        the key is `(org_id, product_isin)`, not the bare ISIN, because a
+        competitor's minimum-income threshold is a commercially sensitive fact.
+
+        `approved_by_risk_committee` defaults to **false**, which is the only
+        safe default for a flag whose purpose is to gate assessment.
+
+        Re-registering an existing ISIN is a `409`, not a silent overwrite:
+        rewriting the terms every in-flight assessment quotes is far more likely
+        to be a mistake than an intent, and `PATCH` exists for the intent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProduct"
+      responses:
+        "201":
+          description: Registered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          description: Malformed ISIN, empty name, or a term outside its bounds.
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: Already registered for this organisation.
+          $ref: "#/components/responses/Error"
+    get:
+      tags: [Product registry]
+      summary: List this organisation's products
+      security:
+        - orgApiKey: []
+      parameters:
+        - name: approved_only
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: |
+            What an advisor-facing product picker should ask for, so an
+            unapproved instrument never appears as recommendable.
+      responses:
+        "200":
+          description: The catalogue.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+        "401":
+          $ref: "#/components/responses/Error"
+
+  /api/v1/products/{isin}:
+    parameters:
+      - name: isin
+        in: path
+        required: true
+        schema: { type: string, example: XS1234567890 }
+    get:
+      tags: [Product registry]
+      summary: Read one product
+      security:
+        - orgApiKey: []
+      responses:
+        "200":
+          description: The product.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "404":
+          description: |
+            Not in *this* organisation's registry. Another tenant's product is
+            indistinguishable from one that does not exist.
+          $ref: "#/components/responses/Error"
+    patch:
+      tags: [Product registry]
+      summary: Amend terms or record risk-committee approval
+      security:
+        - orgApiKey: []
+      description: |
+        Every field is optional; only what is supplied changes. The audit event
+        records the before and after of each changed field, because "who lowered
+        the minimum income, and when" is the first question anyone reviewing a
+        mis-sold product asks.
+
+        An amendment applies to assessments opened **after** it. Assessments
+        already open keep the terms they were opened with.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AmendProduct"
+      responses:
+        "200":
+          description: The amended product.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          description: A term outside its bounds.
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+
+  /api/v1/wealth-assessments/{request_id}:
+    get:
+      tags: [Structured-product suitability]
+      summary: The evidence pack for one assessment
+      security:
+        - orgApiKey: []
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      description: |
+        Everything needed to reconstruct one suitability assessment, in one
+        call: the terms and where they came from, every proof attempt (accepted
+        *and* rejected), the verification key digest, the audit-chain excerpt,
+        and the verdict with a note on how it was read.
+
+        This is an API rather than a report generator on purpose. A bank's
+        compliance function will want the evidence in their own template, in
+        Arabic, joined to their own CRM; if the only route to it were a script
+        written against our schema, they would be blocked on us for every one of
+        those. `scripts/export_audit_evidence.py` is simply the consumer that
+        renders a PDF.
+
+        What is deliberately absent: the client's income, liquid assets, risk
+        tolerance and holdings. The server never had them, and the response says
+        so explicitly rather than leaving a reader to wonder whether the gap is
+        an oversight.
+      responses:
+        "200":
+          description: The evidence pack.
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          description: No such assessment for this organisation.
+          $ref: "#/components/responses/Error"
+
+  /health:
+    get:
+      tags: [Operations]
+      summary: Deep readiness check
+      security: []
+      description: |
+        Distinct from `/healthz`, which is the liveness probe and must not
+        depend on anything external — restarting a container because its
+        database blinked makes an outage worse.
+
+        This one answers the questions that decide whether the instance can
+        complete a suitability journey: is the database reachable, is the
+        signing `kid` actually present in the JWKS a relying party would fetch,
+        is there a verification key for every circuit, and — the one nothing
+        else would catch — does the wealth verification key in use still match
+        the one published in the repository. Both keys work perfectly well in
+        isolation; if they have drifted, every proof accepted today is
+        unverifiable tomorrow by the examiner holding the committed key, with no
+        other symptom.
+
+        Returns `503` when degraded, so a load balancer can drain the instance
+        without killing it.
+      responses:
+        "200":
+          description: Healthy.
+        "503":
+          description: Degraded. The body names which check failed.
+
+  /metrics:
+    get:
+      tags: [Operations]
+      summary: Prometheus exposition
+      security: []
+      description: |
+        `memtara_proof_verification_total{circuit_type,result}`,
+        `memtara_proof_latency_seconds` (histogram, by circuit) and
+        `memtara_product_registry_size`.
+
+        Unauthenticated, because that is how scrapers work. The safety of that
+        rests on carrying no tenant-identifying label: a per-org label would
+        turn this endpoint into a customer directory, and reveal from a rising
+        counter when a named competitor is onboarding. Per-tenant volume is
+        answerable from the audit log, behind `OrgAuth`, which is where a
+        per-tenant fact belongs.
+      responses:
+        "200":
+          description: Exposition text.
+          content:
+            text/plain:
+              schema: { type: string }
+
+  /healthz:
+    get:
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: ok
+          content:
+            text/plain:
+              schema: { type: string, example: ok }
+
+components:
+
+  securitySchemes:
+    sessionToken:
+      type: http
+      scheme: bearer
+      description: |
+        An opaque, revocable session token from any auth flow. Opaque rather
+        than a JWT precisely so it can be killed in one query — the product's
+        revocation guarantees depend on it.
+    orgApiKey:
+      type: http
+      scheme: bearer
+      description: |
+        A relying party's API key, presented in the same `Authorization: Bearer`
+        header as a session token. Routes readable by "the org that created it
+        or the user it is for" try the presented credential as both.
+
+  parameters:
+    DisclosureRequestId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    OrgId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Error:
+      description: Error.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+
+  schemas:
+
+    JwkSet:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            required: [kty, crv, x, alg, kid]
+            properties:
+              kty: { type: string, const: OKP }
+              crv: { type: string, const: Ed25519 }
+              x:
+                type: string
+                description: base64url-no-pad, 32-byte Ed25519 public key (RFC 8037 §2).
+              use: { type: string, const: sig }
+              alg: { type: string, const: EdDSA }
+              kid:
+                type: string
+                description: RFC 7638 JWK thumbprint. Stable for a given key.
+
+    PredicateCatalogueEntry:
+      type: object
+      properties:
+        predicate: { type: string }
+        circuit: { $ref: "#/components/schemas/CircuitType" }
+        cbuae_clauses:
+          type: array
+          items: { type: string }
+          description: Clause ids from CBUAE_EN_6958_VER1, e.g. "5(c)".
+        dfsa_rules:
+          type: array
+          items: { type: string }
+          description: |
+            DFSA Conduct of Business rules this predicate is evidence for. See
+            the DFSA appendix in `docs/REGULATORY_MATRIX.md` for the caveat on
+            this identifier — suitability is COB 3.4 in the current rulebook,
+            not 3.1.
+        endpoint:
+          type: string
+          description: |
+            Which route mints a token for this predicate. Everything except
+            suitability goes through `/api/v1/issue-proof`; that endpoint
+            refuses any predicate whose circuit has a public output it does not
+            read.
+        description: { type: string }
+
+    IssueProofRequest:
+      type: object
+      required: [user_id, predicate]
+      properties:
+        user_id: { type: string, format: uuid }
+        predicate:
+          type: string
+          description: Must be one of `GET /api/v1/predicates`.
+        disclosure_request_id:
+          type: string
+          format: uuid
+          description: Required on the fresh path; optional on the attested path, where it narrows which prior proof to re-attest.
+        public_inputs:
+          type: array
+          items: { type: string, pattern: "^0[xX][0-9a-fA-F]{1,64}$" }
+          description: One `0x`-prefixed hex field element per public input, in the circuit's declared order. Supply with `proof` or omit both.
+        proof:
+          type: string
+          description: base64url-no-pad `bb` proof bytes.
+
+    IssueProofResponse:
+      type: object
+      required: [proof_token, expires_in, regulatory_audit_id]
+      properties:
+        proof_token:
+          type: string
+          description: Compact JWS (EdDSA). Claims are described by `ProofTokenClaims`.
+        expires_in:
+          type: integer
+          description: Seconds. 300 by default.
+          example: 300
+        regulatory_audit_id:
+          type: string
+          format: uuid
+          description: Echoed from the token so a caller can log it without decoding the JWT.
+
+    ProofTokenClaims:
+      type: object
+      description: |
+        The decoded payload of `proof_token`. Not a response body — documented
+        here because it is the actual integration contract a relying party
+        codes against.
+      required: [iss, sub, user_id, predicate, verified, circuit, proof_hash, regulatory_audit_id, cbuae_clauses, iat, exp, jti]
+      properties:
+        iss: { type: string, description: The issuer's base URL. Validate it. }
+        sub: { type: string, format: uuid, description: Same value as user_id, for generic JOSE tooling. }
+        user_id: { type: string, format: uuid }
+        predicate: { type: string }
+        verified:
+          type: boolean
+          const: true
+          description: |
+            Always true on an issued token — a failed verification produces an
+            error, not a negative attestation. Assert on it anyway and fail
+            closed if a future version ever changes that.
+        circuit: { $ref: "#/components/schemas/CircuitType" }
+        proof_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: SHA-256 of the verified proof bytes, lowercase hex. Binds this attestation to one specific proof.
+        regulatory_audit_id:
+          type: string
+          format: uuid
+          description: |
+            The join key between this token, Memtara's `audit_log` hash chain,
+            and the relying party's own chain — what makes two independent
+            append-only logs correlatable without either system calling the
+            other.
+        cbuae_clauses:
+          type: array
+          items: { type: string }
+        product_isin:
+          type: string
+          description: |
+            Suitability attestations only. The instrument the assessment was
+            performed for. A verdict detached from its instrument is
+            meaningless — the same client is suitable for one note and not
+            another — so a relying party must check this against the product it
+            is about to recommend.
+        suitable:
+          type: boolean
+          description: |
+            Suitability attestations only, and **not** `verified` under another
+            name. `verified` says a proof was cryptographically checked;
+            `suitable` is the answer that proof carried, and it is legitimately
+            `false`. A documented decline is evidence of an assessment; gating
+            on `verified` alone gates on nothing.
+        dfsa_rules:
+          type: array
+          items: { type: string }
+        iat: { type: integer, format: int64 }
+        exp: { type: integer, format: int64 }
+        jti:
+          type: string
+          format: uuid
+          description: Lets a relying party reject a replayed token inside its validity window.
+
+    Product:
+      type: object
+      required: [id, org_id, product_isin, product_name, risk_level, min_income,
+                 min_liquidity, max_concentration_percent, approved_by_risk_committee,
+                 check_digit_valid, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        product_isin: { type: string, example: XS1234567890 }
+        product_name: { type: string }
+        risk_level: { type: integer, minimum: 1, maximum: 5 }
+        min_income: { type: integer, format: int64 }
+        min_liquidity: { type: integer, format: int64 }
+        max_concentration_percent: { type: integer, minimum: 0, maximum: 100 }
+        approved_by_risk_committee:
+          type: boolean
+          description: |
+            Not a label. `issue-wealth-request` returns 409 while this is false.
+        check_digit_valid:
+          type: boolean
+          description: |
+            The ISO 6166 check digit result, reported rather than enforced. The
+            illustrative identifiers used throughout this project fail it, so
+            enforcing would reject the cases the feature was specified against.
+            A deployment fed by a real product master should treat `false` here
+            as a data-quality alarm.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateProduct:
+      type: object
+      required: [product_isin, product_name, risk_level, min_income, min_liquidity,
+                 max_concentration_percent]
+      properties:
+        product_isin: { type: string }
+        product_name: { type: string }
+        risk_level: { type: integer, minimum: 1, maximum: 5 }
+        min_income: { type: integer, format: int64, minimum: 0 }
+        min_liquidity: { type: integer, format: int64, minimum: 0 }
+        max_concentration_percent: { type: integer, minimum: 0, maximum: 100 }
+        approved_by_risk_committee: { type: boolean, default: false }
+
+    AmendProduct:
+      type: object
+      description: Every field optional; only what is supplied changes.
+      properties:
+        product_name: { type: string }
+        risk_level: { type: integer, minimum: 1, maximum: 5 }
+        min_income: { type: integer, format: int64, minimum: 0 }
+        min_liquidity: { type: integer, format: int64, minimum: 0 }
+        max_concentration_percent: { type: integer, minimum: 0, maximum: 100 }
+        approved_by_risk_committee: { type: boolean }
+
+    IssueWealthRequest:
+      type: object
+      required: [user_id, product_isin]
+      properties:
+        user_id: { type: string, format: uuid }
+        product_isin:
+          type: string
+          pattern: "^[A-Z]{2}[A-Z0-9]{9}[0-9]$"
+          example: XS1234567890
+          description: |
+            Must already be registered for this org via `POST /api/v1/products`,
+            and approved by the risk committee. The terms come from that entry.
+        min_income:
+          type: integer
+          deprecated: true
+          description: |
+            **Rejected, not ignored.** Supplying any of the four term fields is
+            a `400`. They moved to the product registry; an integration that
+            still sends them believes it is setting the bar, and silently
+            ignoring that belief is how an advisor ends up with a signed
+            attestation against thresholds nobody set.
+        min_liquidity: { type: integer, deprecated: true }
+        max_concentration_percent: { type: integer, deprecated: true }
+        product_risk_level: { type: integer, deprecated: true }
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+          default: 900
+          description: How long the client has to answer. Long enough to approve a prompt on a phone, short enough that a stale assessment cannot be presented as a current one.
+
+    IssueWealthRequestResponse:
+      type: object
+      required: [request_id, circuit, nonce, product_ref, product_isin, product_name, product_id, window_start, window_end, expires_in, public_input_template]
+      properties:
+        request_id: { type: string, format: uuid }
+        circuit: { $ref: "#/components/schemas/CircuitType" }
+        product_name:
+          type: string
+          description: |
+            From the registry, snapshotted onto this request so a product
+            renamed later does not retroactively rename it in the evidence.
+        product_id:
+          type: string
+          format: uuid
+          description: The catalogue row the terms came from.
+        nonce:
+          type: string
+          description: base64url-no-pad. The exact bytes the client must supply as the `nonce` public input and bind into the signed commitment.
+        product_ref:
+          type: string
+          pattern: "^0x[0-9a-f]{64}$"
+          description: Domain-separated digest of the ISIN, returned so the client need not reimplement the derivation and risk disagreeing with the server about it.
+        product_isin: { type: string }
+        min_income: { type: integer, format: int64 }
+        min_liquidity: { type: integer, format: int64 }
+        max_concentration_percent: { type: integer }
+        product_risk_level: { type: integer }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        expires_in: { type: integer }
+        public_input_template:
+          type: array
+          description: |
+            The 12 public inputs in circuit order, with every server-fixed value
+            filled in and the client-supplied ones named. Returned because the
+            ordering is a protocol detail a client has no other way to learn,
+            and getting it wrong produces a proof that fails verification with
+            no clue as to why. Index 11 is the circuit's output.
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              value: { type: string }
+              note: { type: string }
+
+    SubmitWealthProofRequest:
+      type: object
+      required: [request_id, public_inputs, proof]
+      properties:
+        request_id: { type: string, format: uuid }
+        public_inputs:
+          type: array
+          minItems: 12
+          maxItems: 12
+          items: { type: string, pattern: "^0[xX][0-9a-fA-F]{1,64}$" }
+        proof:
+          type: string
+          description: base64url-no-pad `bb` proof bytes (14,656 bytes for this circuit).
+
+    SubmitWealthProofResponse:
+      type: object
+      required: [proof_token, expires_in, suitable, product_isin, regulatory_audit_id]
+      properties:
+        proof_token:
+          type: string
+          description: Compact JWS (EdDSA), carrying `suitable`, `product_isin` and `dfsa_rules` in addition to the usual claims.
+        expires_in: { type: integer, example: 300 }
+        suitable:
+          type: boolean
+          description: |
+            The circuit's verdict, echoed outside the token so a caller can act
+            on it without decoding the JWT. The authoritative copy is the
+            signed `suitable` claim inside the token; this one is convenience,
+            not evidence.
+        product_isin: { type: string }
+        regulatory_audit_id: { type: string, format: uuid }
+
+    CreateDisclosureRequest:
+      type: object
+      required: [user_id, circuit_type, policy, ttl_seconds]
+      properties:
+        user_id: { type: string, format: uuid }
+        circuit_type: { $ref: "#/components/schemas/CircuitType" }
+        policy:
+          type: object
+          description: A serialized `SessionPolicy` — the same type `vault/` and the circuits already agree on.
+        ttl_seconds:
+          type: integer
+          minimum: 1
+          maximum: 604800
+
+    DisclosureRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        circuit_type: { $ref: "#/components/schemas/CircuitType" }
+        policy: { type: object }
+        status: { $ref: "#/components/schemas/DisclosureStatus" }
+        nonce:
+          type: string
+          description: base64url-no-pad, 32 bytes. The exact value the proof must commit to.
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    DisclosureRequestSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        circuit_type: { $ref: "#/components/schemas/CircuitType" }
+        status: { $ref: "#/components/schemas/DisclosureStatus" }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    SubmitProofRequest:
+      type: object
+      required: [public_inputs, proof]
+      properties:
+        public_inputs:
+          type: array
+          items: { type: string, pattern: "^0[xX][0-9a-fA-F]{1,64}$" }
+        proof: { type: string }
+
+    SubmitProofResponse:
+      type: object
+      properties:
+        proof_id: { type: string, format: uuid }
+        valid: { type: boolean }
+        request_status: { $ref: "#/components/schemas/DisclosureStatus" }
+
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        event_type:
+          type: string
+          examples: [disclosure_request_created, proof_verified, proof_verification_failed, proof_token_issued]
+        ref_id: { type: string, format: uuid, nullable: true }
+        event_hash: { type: string, description: base64url-no-pad SHA-256. }
+        prev_hash: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    VaultBlob:
+      type: object
+      properties:
+        ciphertext: { type: string }
+        vault_root: { type: string }
+        version: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time }
+
+    CircuitType:
+      type: string
+      enum: [emergency_session, ai_session, tax_session, identity_session, wealth_suitability]
+
+    DisclosureStatus:
+      type: string
+      enum: [pending, fulfilled, expired, revoked]
+
+    OrgType:
+      type: string
+      enum: [bank, ai_platform, hospital, government]

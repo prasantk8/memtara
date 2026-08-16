@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIHOOTS — Verifiable AI Governance | Powered by Memtara ZK</title>
+<meta name="description" content="Tamper-evident AI audit trails, powered by Memtara zero-knowledge proofs. Real Baby Jubjub signatures. SHA-256 hash chains. Built against DFSA COB 3.4.">
+<meta name="theme-color" content="#0a0e14">
+<meta property="og:title" content="AIHOOTS: Verifiable AI Governance for Regulated Finance.">
+<meta property="og:description" content="The gateway makes what a model was told auditable. The Memtara ZK engine makes it true. Real proofs, run them yourself in about forty seconds.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://aihoots.com/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ---------------------------------------------------------------
+   Tokens are lifted verbatim from the live ai.aihoots.com stylesheet
+   so the umbrella is one brand rather than two that merely agree.
+   Do not "improve" these values in isolation — change them there
+   first, then here.
+
+   The one rule this page adds on top:
+       --signal (green)  = AIHOOTS, the governance layer
+       --engine (amber)  = Memtara, the ZK engine underneath
+   Hue carries the platform/engine distinction everywhere it appears,
+   so a reader sees the architecture before reading a word of it.
+
+   Deliberately single-theme. The live site is dark-only; a page that
+   flipped to parchment on a light-mode laptop would not read as the
+   same company. Every colour is therefore painted explicitly.
+   --------------------------------------------------------------- */
+:root{
+  --ink:#0a0e14;
+  --panel:#111721;
+  --sunk:#0d131c;
+  --line:#1e2733;
+  --fog:#8a97a6;
+  --paper:#e8edf2;
+  --signal:#3ddc97;
+  --engine:#f5b445;
+  --blue:#5b8def;
+  --alarm:#ff5c5c;
+  --maxw:1080px;
+  --sans:"Space Grotesk",system-ui,-apple-system,Segoe UI,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *{animation:none!important;transition:none!important}
+}
+body{
+  background:var(--ink);
+  color:var(--paper);
+  font-family:var(--sans);
+  font-size:16px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+a{color:var(--signal);text-decoration:none}
+a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid var(--engine);outline-offset:3px;border-radius:2px}
+code,.mono{font-family:var(--mono)}
+
+/* ---------- nav ---------- */
+header.top{
+  position:sticky;top:0;z-index:20;
+  background:rgba(10,14,20,.88);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);
+}
+.top .wrap{display:flex;align-items:center;gap:14px;height:62px}
+.logo{
+  font-family:var(--mono);font-weight:700;font-size:16px;
+  letter-spacing:.14em;color:var(--paper);
+}
+.logo:hover{text-decoration:none}
+/* The badge is the whole rebrand in one element: the engine name, in the
+   engine's colour, subordinate to the platform wordmark but attached to it. */
+.badge-engine{
+  font-family:var(--mono);font-size:10px;font-weight:500;
+  letter-spacing:.12em;text-transform:uppercase;
+  color:var(--engine);
+  border:1px solid rgba(245,180,69,.4);
+  border-radius:3px;padding:3px 7px;
+  white-space:nowrap;
+}
+.badge-engine .by{color:var(--fog);}
+.navlinks{margin-left:auto;display:flex;gap:22px;align-items:center}
+.navlinks a{
+  font-family:var(--mono);font-size:12.5px;color:var(--fog);
+  letter-spacing:.04em;
+}
+.navlinks a:hover{color:var(--paper);text-decoration:none}
+.navlinks a.cta{
+  color:var(--ink);background:var(--signal);
+  padding:7px 13px;border-radius:4px;font-weight:700;
+}
+@media (max-width:720px){.navlinks a.hide-sm{display:none}}
+@media (max-width:460px){.badge-engine{display:none}}
+
+/* ---------- hero ---------- */
+.hero{padding:76px 0 60px;border-bottom:1px solid var(--line)}
+.hero .wrap{display:grid;grid-template-columns:1fr auto;gap:44px;align-items:center}
+@media (max-width:860px){
+  .hero .wrap{grid-template-columns:1fr;gap:34px}
+  .hero{padding:52px 0 44px}
+}
+.eyebrow{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--fog);margin-bottom:18px;
+}
+.eyebrow b{color:var(--signal);font-weight:500}
+h1{
+  font-size:clamp(30px,5.1vw,50px);line-height:1.1;font-weight:700;
+  letter-spacing:-.02em;text-wrap:balance;margin-bottom:20px;
+}
+h1 .plat{color:var(--signal)}
+.sub{
+  font-size:clamp(16px,2.1vw,19px);color:var(--fog);
+  max-width:56ch;line-height:1.55;
+}
+.sub b{color:var(--paper);font-weight:500}
+.sub .eng{color:var(--engine);font-weight:500}
+.herobtns{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px}
+.btn{
+  font-family:var(--mono);font-size:13px;font-weight:700;
+  padding:12px 18px;border-radius:5px;border:1px solid var(--line);
+  color:var(--paper);background:var(--panel);
+  transition:border-color .15s ease,color .15s ease;
+}
+.btn:hover{text-decoration:none;border-color:var(--fog)}
+.btn.primary{background:var(--signal);color:var(--ink);border-color:var(--signal)}
+.btn.primary:hover{border-color:var(--paper)}
+
+/* the paired mark: governance shield (AIHOOTS) + vault dial (Memtara) */
+.mark{width:190px;height:190px;flex:none}
+@media (max-width:860px){.mark{width:140px;height:140px}}
+
+/* ---------- proof strip ---------- */
+.strip{border-bottom:1px solid var(--line);background:var(--sunk)}
+.strip .wrap{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
+  background:var(--line);padding:0;max-width:var(--maxw);
+}
+.strip .cell{background:var(--sunk);padding:22px 20px}
+.strip .n{
+  font-family:var(--mono);font-size:22px;font-weight:700;
+  color:var(--paper);font-variant-numeric:tabular-nums;
+}
+.strip .n.ok{color:var(--signal)}
+.strip .n.eng{color:var(--engine)}
+.strip .n.zero{color:var(--alarm)}
+.strip .l{
+  font-family:var(--mono);font-size:11px;color:var(--fog);
+  margin-top:6px;line-height:1.45;
+}
+@media (max-width:760px){.strip .wrap{grid-template-columns:repeat(2,1fr)}}
+
+/* ---------- generic section ---------- */
+section{padding:66px 0;border-bottom:1px solid var(--line)}
+h2{
+  font-size:clamp(22px,3.3vw,30px);line-height:1.2;font-weight:700;
+  letter-spacing:-.015em;text-wrap:balance;margin-bottom:14px;
+}
+.lede{color:var(--fog);max-width:64ch;margin-bottom:34px}
+.kicker{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--fog);margin-bottom:12px;
+}
+
+/* ---------- the two-layer stack ---------- */
+.stack{display:grid;gap:14px}
+.layer{
+  border:1px solid var(--line);border-radius:7px;background:var(--panel);
+  padding:20px 22px;display:grid;grid-template-columns:auto 1fr;
+  gap:18px;align-items:start;
+}
+.layer .step{
+  font-family:var(--mono);font-size:12px;font-weight:700;
+  width:30px;height:30px;flex:none;border-radius:4px;
+  display:grid;place-items:center;
+}
+.layer.gov .step{color:var(--signal);border:1px solid rgba(61,220,151,.4);background:rgba(61,220,151,.08)}
+.layer.eng .step{color:var(--engine);border:1px solid rgba(245,180,69,.4);background:rgba(245,180,69,.08)}
+.layer h3{font-size:16.5px;font-weight:700;margin-bottom:5px}
+.layer.gov h3 em{color:var(--signal);font-style:normal}
+.layer.eng h3 em{color:var(--engine);font-style:normal}
+.layer p{color:var(--fog);font-size:14.5px;max-width:70ch}
+.layer .who{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--fog);margin-bottom:7px;
+}
+.layer.gov .who{color:var(--signal)}
+.layer.eng .who{color:var(--engine)}
+
+/* ---------- CSS-only tabs (no JS: survives a strict CSP) ---------- */
+.tabs input{position:absolute;opacity:0;width:0;height:0}
+.tablist{
+  display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;
+  border-bottom:1px solid var(--line);padding-bottom:16px;
+}
+.tablist label{
+  font-family:var(--mono);font-size:12.5px;font-weight:500;
+  padding:8px 14px;border-radius:5px;cursor:pointer;
+  border:1px solid var(--line);color:var(--fog);background:var(--panel);
+  transition:color .15s ease,border-color .15s ease;
+  user-select:none;
+}
+.tablist label:hover{color:var(--paper);border-color:var(--fog)}
+.panel{display:none}
+#t1:checked~.tablist label[for=t1],
+#t2:checked~.tablist label[for=t2],
+#t3:checked~.tablist label[for=t3],
+#t4:checked~.tablist label[for=t4]{
+  color:var(--ink);background:var(--engine);border-color:var(--engine);font-weight:700;
+}
+#t1:checked~#p1,#t2:checked~#p2,#t3:checked~#p3,#t4:checked~#p4{display:block}
+/* The radio itself is visually hidden, so its focus ring would be invisible:
+   a keyboard user would arrow between tabs with no indication of where they
+   are. Forward the ring onto the label the radio controls. */
+#t1:focus-visible~.tablist label[for=t1],
+#t2:focus-visible~.tablist label[for=t2],
+#t3:focus-visible~.tablist label[for=t3],
+#t4:focus-visible~.tablist label[for=t4]{
+  outline:2px solid var(--engine);outline-offset:2px;color:var(--paper);
+}
+.panelgrid{display:grid;grid-template-columns:1.15fr .85fr;gap:26px}
+@media (max-width:800px){.panelgrid{grid-template-columns:1fr}}
+.panel h3{font-size:19px;font-weight:700;margin-bottom:6px}
+.panel .circ{
+  font-family:var(--mono);font-size:11.5px;color:var(--engine);
+  margin-bottom:14px;word-break:break-all;
+}
+.panel p{color:var(--fog);font-size:14.5px;margin-bottom:14px;max-width:62ch}
+.facts{list-style:none;display:grid;gap:9px}
+.facts li{
+  font-family:var(--mono);font-size:12.5px;color:var(--fog);
+  padding-left:20px;position:relative;line-height:1.5;
+}
+.facts li::before{
+  content:"";position:absolute;left:4px;top:8px;
+  width:6px;height:6px;border-radius:50%;background:var(--engine);
+}
+.facts li b{color:var(--paper);font-weight:500}
+.status{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;padding:4px 9px;border-radius:3px;
+  display:inline-block;margin-bottom:12px;
+}
+.status.live{color:var(--signal);border:1px solid rgba(61,220,151,.45);background:rgba(61,220,151,.07)}
+.status.built{color:var(--blue);border:1px solid rgba(91,141,239,.45);background:rgba(91,141,239,.07)}
+.enginenote{
+  margin-top:26px;padding:14px 18px;border-radius:6px;
+  border:1px solid rgba(245,180,69,.3);background:rgba(245,180,69,.05);
+  font-family:var(--mono);font-size:12.5px;color:var(--engine);
+}
+
+/* ---------- terminal ---------- */
+.term{
+  background:var(--sunk);border:1px solid var(--line);border-radius:7px;
+  overflow:hidden;
+}
+.term .bar{
+  border-bottom:1px solid var(--line);padding:9px 14px;
+  font-family:var(--mono);font-size:11px;color:var(--fog);
+  display:flex;justify-content:space-between;gap:10px;
+}
+.term pre{
+  padding:16px;overflow-x:auto;font-family:var(--mono);
+  font-size:12.2px;line-height:1.65;color:var(--fog);
+}
+.term .g{color:var(--signal)}
+.term .a{color:var(--engine)}
+.term .w{color:var(--paper)}
+.term .c{color:#4b5666}
+.term .r{color:var(--alarm)}
+
+/* ---------- gateway CTA ---------- */
+.gateway{
+  border:1px solid var(--line);border-radius:8px;background:var(--panel);
+  padding:30px 32px;display:grid;grid-template-columns:1fr auto;
+  gap:26px;align-items:center;
+}
+@media (max-width:760px){.gateway{grid-template-columns:1fr}}
+.gateway h2{margin-bottom:10px;font-size:clamp(20px,2.8vw,26px)}
+.gateway p{color:var(--fog);max-width:60ch;font-size:14.5px}
+
+/* ---------- honest limits ---------- */
+.limits{list-style:none;display:grid;gap:11px;max-width:74ch}
+.limits li{
+  font-size:14.5px;color:var(--fog);padding-left:26px;position:relative;
+}
+.limits li::before{
+  content:"\00d7";position:absolute;left:5px;top:-1px;
+  color:var(--alarm);font-family:var(--mono);font-size:15px;
+}
+.limits li b{color:var(--paper);font-weight:500}
+
+/* ---------- footer ---------- */
+footer{padding:40px 0 60px;color:var(--fog);font-size:13px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:10px 26px;align-items:baseline}
+footer .mono{font-size:11.5px;letter-spacing:.05em}
+footer a{color:var(--fog);text-decoration:underline}
+footer a:hover{color:var(--paper)}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a href="/" class="logo">AIHOOTS</a>
+    <span class="badge-engine"><span class="by">ZK by</span> Memtara</span>
+    <nav class="navlinks">
+      <a href="#platform" class="hide-sm">Platform</a>
+      <a href="#usecases" class="hide-sm">Use cases</a>
+      <a href="#run" class="hide-sm">Run it</a>
+      <a href="#limits" class="hide-sm">Limits</a>
+      <a href="https://github.com/prasantk8/memtara-zkp" class="cta">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap">
+    <div>
+      <div class="eyebrow">AI governance for regulated finance · <b>built in the open</b></div>
+      <h1><span class="plat">AIHOOTS:</span> Verifiable AI Governance for Regulated Finance.</h1>
+      <p class="sub">
+        Tamper-evident AI audit trails, powered by <span class="eng">Memtara zero-knowledge proofs</span>.
+        <b>Real Baby Jubjub signatures. SHA-256 hash chains.</b> Built against DFSA COB 3.4.
+      </p>
+      <div class="herobtns">
+        <a class="btn primary" href="#run">Run the proof yourself</a>
+        <a class="btn" href="#platform">How the two layers fit</a>
+      </div>
+    </div>
+
+    <!-- The mark is the positioning: a governance shield (AIHOOTS, green)
+         whose interior is a vault dial (Memtara, amber). Platform outside,
+         engine inside — the same relationship the page argues in prose. -->
+    <svg class="mark" viewBox="0 0 200 200" role="img"
+         aria-label="An AIHOOTS governance shield enclosing the Memtara vault dial: the platform outside, the zero-knowledge engine inside.">
+      <path d="M100 14 L172 44 V102 C172 143 140 172 100 186 C60 172 28 143 28 102 V44 Z"
+            fill="none" stroke="#3ddc97" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M100 27 L160 52 V102 C160 136 133 161 100 173 C67 161 40 136 40 102 V52 Z"
+            fill="rgba(61,220,151,0.05)" stroke="rgba(61,220,151,0.28)" stroke-width="1"/>
+      <circle cx="100" cy="100" r="42" fill="none" stroke="#f5b445" stroke-width="2.5"/>
+      <circle cx="100" cy="100" r="30" fill="none" stroke="rgba(245,180,69,0.45)" stroke-width="1"/>
+      <circle cx="100" cy="100" r="7" fill="#f5b445"/>
+      <g stroke="#f5b445" stroke-width="3" stroke-linecap="round">
+        <line x1="100" y1="58" x2="100" y2="70"/>
+        <line x1="142" y1="100" x2="130" y2="100"/>
+        <line x1="100" y1="142" x2="100" y2="130"/>
+        <line x1="58" y1="100" x2="70" y2="100"/>
+      </g>
+      <g stroke="rgba(245,180,69,0.5)" stroke-width="2" stroke-linecap="round">
+        <line x1="130" y1="70" x2="122" y2="78"/>
+        <line x1="130" y1="130" x2="122" y2="122"/>
+        <line x1="70" y1="130" x2="78" y2="122"/>
+        <line x1="70" y1="70" x2="78" y2="78"/>
+      </g>
+      <path d="M100 100 L131 79" stroke="#f5b445" stroke-width="3" stroke-linecap="round"/>
+    </svg>
+  </div>
+</div>
+
+<div class="strip">
+  <div class="wrap">
+    <div class="cell">
+      <div class="n eng">~40s</div>
+      <div class="l">One command, from cold start to a sealed case file with a real proof inside</div>
+    </div>
+    <div class="cell">
+      <div class="n ok">1 bit</div>
+      <div class="l">What the bank receives. Income, assets, risk tolerance and holdings never leave the device</div>
+    </div>
+    <div class="cell">
+      <div class="n">2031</div>
+      <div class="l">An examiner re-verifies a 2026 proof against a key published today. No call back to us</div>
+    </div>
+    <div class="cell">
+      <div class="n zero">0 banks</div>
+      <div class="l">Piloted by nobody yet — and we say so on the page rather than in the footnotes</div>
+    </div>
+  </div>
+</div>
+
+<section id="platform">
+  <div class="wrap">
+    <div class="kicker">The platform and the engine</div>
+    <h2>A gateway proves what the model was told. It cannot prove the model was told the truth.</h2>
+    <p class="lede">
+      That gap is where AI governance in regulated finance actually fails. A prompt asserting
+      <em>"this client qualifies for the note"</em> gets chained faithfully, signed, and stored —
+      and it is still prompt text, which is attacker-controlled. AIHOOTS is the governance
+      platform; Memtara is the zero-knowledge engine that closes the gap underneath it.
+    </p>
+
+    <div class="stack">
+      <div class="layer eng">
+        <div class="step">01</div>
+        <div>
+          <div class="who">Memtara · ZK engine</div>
+          <h3>The client's device proves it, <em>before anyone is asked to believe it</em></h3>
+          <p>
+            On the client's own device, a zero-knowledge proof is generated over a vault the
+            client already holds, against terms the bank registered in advance. Baby Jubjub
+            signatures, Poseidon commitments, a Noir circuit, a Barretenberg proof. The
+            figures are the witness — they stay on the device by construction, not by policy.
+          </p>
+        </div>
+      </div>
+      <div class="layer eng">
+        <div class="step">02</div>
+        <div>
+          <div class="who">Memtara · ZK engine</div>
+          <h3>The server verifies and signs a <em>short-lived attestation</em></h3>
+          <p>
+            Memtara verifies the proof against a committed verification key and issues an
+            Ed25519-signed token that lives for 300 seconds. The registry rejects terms
+            supplied by the caller, so a bank cannot quietly move its own goalposts.
+          </p>
+        </div>
+      </div>
+      <div class="layer gov">
+        <div class="step">03</div>
+        <div>
+          <div class="who">AIHOOTS · governance platform</div>
+          <h3>The gateway validates it <em>locally</em> and injects a verified fact</h3>
+          <p>
+            The audit gateway checks the attestation against a published JWKS with no
+            synchronous call back to Memtara, then puts the verified fact into the model's
+            context. The model is no longer being asked to take the prompt's word for it.
+          </p>
+        </div>
+      </div>
+      <div class="layer gov">
+        <div class="step">04</div>
+        <div>
+          <div class="who">AIHOOTS · governance platform</div>
+          <h3>Every request, response and decision lands in a <em>tamper-evident chain</em></h3>
+          <p>
+            The proof hash is appended to a SHA-256 hash chain alongside the request, the
+            response and the policy decision. An independent verifier detects a single
+            flipped byte at any position — including one the platform itself flipped.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="usecases">
+  <div class="wrap">
+    <div class="kicker">Use cases</div>
+    <h2>Four disclosure journeys, four circuits, one engine.</h2>
+    <p class="lede">
+      Each tab is a circuit that exists in the repository and compiles today. The status chip
+      says how far it has been taken, because "we could build that" and "that is built" are
+      different sentences and only one of them belongs on a website.
+    </p>
+
+    <div class="tabs">
+      <input type="radio" name="uc" id="t1" checked>
+      <input type="radio" name="uc" id="t2">
+      <input type="radio" name="uc" id="t3">
+      <input type="radio" name="uc" id="t4">
+
+      <!-- Deliberately a radio group rather than an ARIA tablist. A real
+           tablist needs roving tabindex, aria-selected and aria-controls kept
+           in sync by script; radios give a keyboard user arrow-key navigation
+           and a correct announcement for free. Half-applied ARIA is worse
+           than none. -->
+      <div class="tablist">
+        <label for="t1">Wealth</label>
+        <label for="t2">Identity</label>
+        <label for="t3">Income</label>
+        <label for="t4">AI sessions</label>
+      </div>
+
+      <div class="panel" id="p1">
+        <div class="panelgrid">
+          <div>
+            <span class="status live">Live · end-to-end tested</span>
+            <h3>Structured-product suitability</h3>
+            <div class="circ">circuits/wealth_suitability/src/main.nr</div>
+            <p>
+              A bank must satisfy itself a structured product is suitable before recommending
+              it. Conventionally that means the client hands over income, portfolio and
+              risk-profile documents and the bank stores them — a permanent, breachable copy
+              of a client's whole financial position, held to justify one recommendation.
+            </p>
+            <p>
+              This circuit produces the same regulatory evidence without the copy. The device
+              proves all four DFSA COB 3.1 limbs were evaluated against the product's
+              registered terms, and discloses exactly one bit: suitable, or not.
+            </p>
+          </div>
+          <ul class="facts">
+            <li><b>Proves</b> four suitability limbs against registered product terms</li>
+            <li><b>Discloses</b> one boolean, plus the product and terms hash</li>
+            <li><b>Never sees</b> income, liquid assets, risk tolerance, holdings value</li>
+            <li><b>Verification key</b> committed to the repo and diffed in CI, so a 2031
+                examiner re-verifies without trusting our build pipeline</li>
+            <li><b>Output</b> a sealed Canonical Case File whose seal fails on one flipped byte</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="panel" id="p2">
+        <div class="panelgrid">
+          <div>
+            <span class="status built">Circuit built · tested</span>
+            <h3>Identity and career verification</h3>
+            <div class="circ">circuits/identity_session/src/main.nr</div>
+            <p>
+              Proves years of experience meet a minimum and that a fixed number of achievement
+              records genuinely exist in the vault, without revealing the record set. The
+              pattern behind DIFC and ADGM onboarding journeys where a counterparty needs a
+              threshold answered, not a dossier delivered.
+            </p>
+            <p>
+              Time-bound like every session circuit: a disclosure that cannot expire is a
+              disclosure you have permanently made.
+            </p>
+          </div>
+          <ul class="facts">
+            <li><b>Proves</b> experience ≥ threshold, plus Merkle inclusion of each record</li>
+            <li><b>Discloses</b> the threshold result and non-sensitive preferences only</li>
+            <li><b>Bounded</b> by an explicit validity window enforced inside the circuit</li>
+            <li><b>Known limit</b> fixed record count per session; variable-count padding is
+                not implemented yet</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="panel" id="p3">
+        <div class="panelgrid">
+          <div>
+            <span class="status built">Circuit built · tested</span>
+            <h3>Income and financial range</h3>
+            <div class="circ">circuits/tax_session/src/main.nr</div>
+            <p>
+              Proves a real income value falls inside a range and that a fixed number of
+              deduction records genuinely exist, without revealing the exact figure or the
+              underlying documents. The primitive behind proof-of-funds, accredited-investor
+              certification and mortgage pre-qualification.
+            </p>
+            <p>
+              The counterparty learns that you clear the bar. It does not learn by how much,
+              which is the part that ends up in a data breach.
+            </p>
+          </div>
+          <ul class="facts">
+            <li><b>Proves</b> min ≤ income ≤ max over a signed, committed vault</li>
+            <li><b>Discloses</b> the range verdict — never the value</li>
+            <li><b>Anchored</b> to a Poseidon vault root, so stale or invented records fail</li>
+            <li><b>Known limit</b> fixed deduction count per session</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="panel" id="p4">
+        <div class="panelgrid">
+          <div>
+            <span class="status built">Circuit built · tested</span>
+            <h3>AI connector sessions</h3>
+            <div class="circ">circuits/ai_session/src/main.nr</div>
+            <p>
+              The circuit written for exactly this platform. It proves that every record
+              disclosed to a model is genuinely in the user's vault <em>and</em> falls under a
+              category the user consented to share — turning "the AI never saw more than it was
+              granted" from an assertion in an architecture document into a checked constraint.
+            </p>
+            <p>
+              Paired with the gateway's hash chain, the result is an audit trail where both
+              halves are verifiable: what the model was told, and that it was true.
+            </p>
+          </div>
+          <ul class="facts">
+            <li><b>Proves</b> vault membership and consent-category scope for every record</li>
+            <li><b>Bounded</b> to a 24-hour maximum session duration in-circuit</li>
+            <li><b>Pairs with</b> the AIHOOTS chain, which records the proof hash alongside the
+                request, response and policy decision</li>
+            <li><b>Known limit</b> fixed record count per session</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <p class="enginenote">All use cases secured by the Memtara ZK engine.</p>
+    <p class="lede" style="margin-top:20px;margin-bottom:0;font-size:14px">
+      A fifth circuit, <code>emergency_session</code>, covers time-boxed medical disclosure.
+      Crypto/VARA, card issuance and trade finance are frequently asked for and are
+      <b style="color:var(--paper);font-weight:500">not built</b> — they are roadmap, and this
+      page will say "live" on the day they are, not before.
+    </p>
+  </div>
+</section>
+
+<section id="run">
+  <div class="wrap">
+    <div class="kicker">Run it</div>
+    <h2>Don't take the page's word for it. It is one command.</h2>
+    <p class="lede">
+      Everything above is checkable in an afternoon by someone who does not trust us, which is
+      the only kind of claim worth putting on a website with zero customers behind it.
+    </p>
+
+    <div class="term">
+      <div class="bar"><span>scripts/demo_cro_workflow.py</span><span>abridged — real output</span></div>
+<pre><span class="c">$ git clone --recurse-submodules https://github.com/prasantk8/memtara-zkp.git
+$ cd memtara-zkp &amp;&amp; ./scripts/quickstart.sh</span>
+
+<span class="w">[1/6]</span> registering the product and its suitability terms
+      <span class="a">terms_hash</span>  9f2c…a41d   <span class="c">(registry rejects caller-supplied terms)</span>
+<span class="w">[2/6]</span> client device builds the witness         <span class="c">figures never leave this step</span>
+<span class="w">[3/6]</span> generating the proof                      <span class="a">bb prove</span>
+<span class="w">[4/6]</span> verifying against the committed vkey      <span class="g">VALID</span>
+<span class="w">[5/6]</span> issuing the attestation                   <span class="c">Ed25519, ttl 300s</span>
+<span class="w">[6/6]</span> sealing the Canonical Case File
+
+      <span class="g">✔</span> Canonical_Case_File.pdf        51 KB
+      <span class="g">✔</span> seal verified — file matches the digest recorded at export
+
+<span class="c">$ ./scripts/memtara-export verify Canonical_Case_File.pdf ; echo $?</span>
+<span class="g">0</span>
+<span class="c"># flip a single byte, then verify again</span>
+<span class="r">1</span>
+</pre>
+    </div>
+
+    <div class="herobtns" style="margin-top:22px">
+      <a class="btn primary" href="https://github.com/prasantk8/memtara-zkp">Clone the repository</a>
+      <a class="btn" href="https://github.com/prasantk8/memtara-zkp/blob/main/docs/REGULATORY_MATRIX.md">The regulatory matrix</a>
+      <a class="btn" href="/memtara.html">Memtara engine detail</a>
+    </div>
+  </div>
+</section>
+
+<section id="gateway">
+  <div class="wrap">
+    <div class="gateway">
+      <div>
+        <div class="kicker">The audit gateway</div>
+        <h2>Ready to audit your AI?</h2>
+        <p>
+          The AIHOOTS E1 audit gateway is an OpenAI-compatible proxy: point any OpenAI client
+          at it and every request, response and policy decision lands in a tamper-evident
+          chain, with an independent verifier that detects tampering at any position. It runs
+          on your infrastructure — <code>docker compose up</code>, then point your client at
+          <code>localhost:8000/v1</code>. There is no hosted proxy holding your prompts,
+          which for a regulated institution is the point rather than a limitation.
+        </p>
+      </div>
+      <div class="herobtns" style="margin-top:0">
+        <a class="btn primary" href="https://github.com/prasantk8/aihoots-e1-audit-gateway">Get the gateway</a>
+        <a class="btn" href="https://ai.aihoots.com">The AIHOOTS lab</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="limits">
+  <div class="wrap">
+    <div class="kicker">What we do not claim</div>
+    <h2>The list a procurement team would otherwise have to assemble themselves.</h2>
+    <p class="lede">
+      Every item here is something a competitor would leave out. They are on the page because
+      the readers this page is for check things, and finding one of these on your own is worse
+      than reading it from us.
+    </p>
+    <ul class="limits">
+      <li><b>No bank has piloted this.</b> Zero customers, zero regulators consulted, zero
+          production deployments. We are opening two pilot slots.</li>
+      <li><b>No SOC 2, no ISO 27001, no third-party penetration test.</b> None are in progress.</li>
+      <li><b>No regulator has approved anything here.</b> The circuits are written against
+          DFSA COB 3.1 and 3.4; a mapping is not an endorsement, and our regulatory matrix
+          names its four gaps before it lists any of its coverage.</li>
+      <li><b>The case-file seal is not a PAdES digital signature.</b> It is a SHA-256 digest
+          recorded at export and checkable offline. Do not let anyone tell you those are
+          the same instrument.</li>
+      <li><b>Memtara holds account identifiers</b> — a mobile number, a user ID, sessions, an
+          encrypted vault blob it cannot decrypt. What it never receives is the client's
+          income, liquid assets, risk tolerance or holdings value.</li>
+      <li><b>A successful verification is not a suitability opinion.</b> A proof that the
+          client is <em>not</em> suitable verifies exactly as successfully as one that says
+          they are. Neither system measures advisor conduct or model bias.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="mono">AIHOOTS · verifiable AI governance</span>
+    <span class="mono" style="color:var(--engine)">ZK engine: Memtara</span>
+    <span><a href="https://github.com/prasantk8/aihoots-e1-audit-gateway">Gateway</a></span>
+    <span><a href="https://github.com/prasantk8/memtara-zkp">Memtara</a></span>
+    <span><a href="https://ai.aihoots.com">Lab</a></span>
+    <span><a href="https://www.linkedin.com/in/prasantk8">LinkedIn</a></span>
+    <span class="mono" style="color:#4b5666">Built in the open. Nothing on this page requires trusting us.</span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,14 +1,19 @@
 mod audit;
 mod auth;
 mod config;
+mod crypto;
 mod db;
 mod disclosure;
 mod domain;
 mod error;
+mod issuance;
+mod ops;
 mod orgs;
+mod products;
 mod state;
 mod vault_sync;
 mod verify;
+mod wealth;
 
 use auth::otp::{LoggingOtpProvider, OtpProvider};
 use auth::uae_pass::{StubUaePassProvider, UaePassProvider};
@@ -40,6 +45,11 @@ async fn main() -> anyhow::Result<()> {
     // missing compiled bytecode, the server should not come up half-working.
     verify::ensure_vkeys(&config).await?;
 
+    // Loaded before the router is built so a malformed MEMTARA_PRIVATE_KEY
+    // fails the boot rather than the first request that needs it.
+    let signer = Arc::new(crypto::signer::IssuerKey::from_env(&config.issuer_base_url)?);
+    tracing::info!(kid = signer.kid(), issuer = signer.issuer(), "issuer key loaded");
+
     let webauthn = auth::webauthn::build(&config)?;
     let otp_provider: Arc<dyn OtpProvider> = Arc::new(LoggingOtpProvider);
     let uae_pass_provider: Arc<dyn UaePassProvider> = Arc::new(StubUaePassProvider {
@@ -55,6 +65,12 @@ async fn main() -> anyhow::Result<()> {
         webauthn_ceremonies: Arc::new(WebauthnCeremonies::default()),
         otp_provider,
         uae_pass_provider,
+        signer,
+        metrics: Arc::new(ops::metrics::Metrics::default()),
+        rate_limiter: Arc::new(ops::rate_limit::RateLimiter::new(
+            config.proof_rate_limit,
+            config.proof_rate_limit_window,
+        )),
     };
 
     let app = Router::new()
@@ -64,7 +80,12 @@ async fn main() -> anyhow::Result<()> {
         .merge(disclosure::router())
         .merge(verify::router())
         .merge(orgs::router())
+        .merge(products::router())
+        .merge(ops::router())
         .merge(audit::router())
+        .merge(crypto::router())
+        .merge(issuance::router())
+        .merge(wealth::router())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

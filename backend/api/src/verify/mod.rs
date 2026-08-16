@@ -113,8 +113,13 @@ pub async fn ensure_vkeys(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-const ALL_CIRCUITS: [CircuitType; 4] =
-    [CircuitType::EmergencySession, CircuitType::AiSession, CircuitType::TaxSession, CircuitType::IdentitySession];
+const ALL_CIRCUITS: [CircuitType; 5] = [
+    CircuitType::EmergencySession,
+    CircuitType::AiSession,
+    CircuitType::TaxSession,
+    CircuitType::IdentitySession,
+    CircuitType::WealthSuitability,
+];
 
 /// Run `bb verify` against a caller-supplied proof and public inputs for
 /// `circuit`'s verification key. Returns `Ok(true)`/`Ok(false)` for a
@@ -124,7 +129,32 @@ const ALL_CIRCUITS: [CircuitType; 4] =
 /// element" for outright garbage — otherwise). `Err` is reserved for
 /// infrastructure failure (bb missing, I/O error) — a caller sending a
 /// wrong-but-well-formed proof must come back as `Ok(false)`, not a 500.
+///
+/// Instrumented here rather than at the call sites, because this is the only
+/// place in the codebase where a proof is actually checked — an alternative
+/// route added later cannot get a token without coming through here, so the
+/// counters cannot silently under-report.
 async fn run_bb_verify(
+    state: &AppState,
+    circuit: CircuitType,
+    public_inputs_bytes: &[u8],
+    proof_bytes: &[u8],
+) -> ApiResult<bool> {
+    let started = std::time::Instant::now();
+    let outcome = run_bb_verify_inner(&state.config, circuit, public_inputs_bytes, proof_bytes).await;
+    state.metrics.observe_verification(
+        circuit,
+        match &outcome {
+            Ok(true) => crate::ops::metrics::VerificationResult::Accepted,
+            Ok(false) => crate::ops::metrics::VerificationResult::Rejected,
+            Err(_) => crate::ops::metrics::VerificationResult::Errored,
+        },
+        started.elapsed(),
+    );
+    outcome
+}
+
+async fn run_bb_verify_inner(
     config: &Config,
     circuit: CircuitType,
     public_inputs_bytes: &[u8],
@@ -186,32 +216,60 @@ async fn run_bb_verify(
 // the public-inputs file — cross-checked against each compiled circuit's
 // own ABI at circuits/target/<name>.json `.abi.parameters[].visibility`,
 // not just read off the source). `nonce` happens to be declared last in
-// all four circuits, but this is written as an explicit per-circuit index
-// rather than a hardcoded "take the last one", since that's an incidental
-// fact about the current circuits, not a rule this module should assume
-// holds for a circuit added later.
+// the first four circuits, but this is written as an explicit per-circuit
+// index rather than a hardcoded "take the last one", since that's an
+// incidental fact about those circuits, not a rule this module should
+// assume — and `wealth_suitability`, which appends a public *output* after
+// the nonce, is the case that proves it.
+//
+// A public return value is packed AFTER every public parameter, at the end
+// of the file. Confirmed empirically rather than assumed: a probe circuit
+// `fn main(a: pub Field, b: pub Field) -> pub Field { a + b + 7 }` proven
+// with a=0x11, b=0x22 produced a 96-byte public_inputs file reading
+// 0x11, 0x22, 0x3a — the return value last.
 // ---------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
-struct PublicInputLayout {
-    count: usize,
-    nonce_index: usize,
+pub(crate) struct PublicInputLayout {
+    pub(crate) count: usize,
+    pub(crate) nonce_index: usize,
+    /// Index of the circuit's public *output*, for circuits that answer a
+    /// question rather than assert it.
+    ///
+    /// `None` for the four session circuits: they assert their predicate, so
+    /// a proof exists only for the affirmative case and there is nothing to
+    /// read. `Some` for `wealth_suitability`, where a proof of "not
+    /// suitable" is a legitimate — and regulatorily necessary — output, and
+    /// a caller that treats "bb verify exited 0" as the answer would accept
+    /// a proof of unsuitability as an approval.
+    pub(crate) outcome_index: Option<usize>,
 }
 
-fn public_input_layout(circuit: CircuitType) -> PublicInputLayout {
+pub(crate) fn public_input_layout(circuit: CircuitType) -> PublicInputLayout {
     match circuit {
         // current_time, vault_root, blood_type_hash, key_meds_hash,
         // allergies_commitment, user_public_key_x, user_public_key_y, nonce
-        CircuitType::EmergencySession => PublicInputLayout { count: 8, nonce_index: 7 },
+        CircuitType::EmergencySession => {
+            PublicInputLayout { count: 8, nonce_index: 7, outcome_index: None }
+        }
         // current_time, expiry_time, vault_root, allowed_categories_root,
         // user_public_key_x, user_public_key_y, nonce
-        CircuitType::AiSession => PublicInputLayout { count: 7, nonce_index: 6 },
+        CircuitType::AiSession => PublicInputLayout { count: 7, nonce_index: 6, outcome_index: None },
         // current_time, expiry_time, vault_root, min_income, max_income,
         // user_public_key_x, user_public_key_y, nonce
-        CircuitType::TaxSession => PublicInputLayout { count: 8, nonce_index: 7 },
+        CircuitType::TaxSession => PublicInputLayout { count: 8, nonce_index: 7, outcome_index: None },
         // current_time, expiry_time, vault_root, min_years,
         // remote_preference, user_public_key_x, user_public_key_y, nonce
-        CircuitType::IdentitySession => PublicInputLayout { count: 8, nonce_index: 7 },
+        CircuitType::IdentitySession => {
+            PublicInputLayout { count: 8, nonce_index: 7, outcome_index: None }
+        }
+        // current_time, expiry_time, vault_root, product_ref, min_income,
+        // min_liquidity, max_concentration_percent, product_risk_level,
+        // user_public_key_x, user_public_key_y, nonce, then the return
+        // value `suitable`.
+        CircuitType::WealthSuitability => {
+            PublicInputLayout { count: 12, nonce_index: 10, outcome_index: Some(11) }
+        }
     }
 }
 
@@ -222,7 +280,7 @@ fn public_input_layout(circuit: CircuitType) -> PublicInputLayout {
 /// order — see report). Wire format is a `0x`-prefixed hex string (how
 /// Noir/NoirJS tooling represents a `Field`), not decimal, so this doesn't
 /// need a bignum-decimal parser.
-fn parse_field_hex(index: usize, s: &str) -> ApiResult<[u8; 32]> {
+pub(crate) fn parse_field_hex(index: usize, s: &str) -> ApiResult<[u8; 32]> {
     let stripped = s
         .strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
@@ -341,9 +399,10 @@ async fn record_valid_proof(
     // here, not as a best-effort follow-up call after commit.
     crate::audit::record_in_tx(
         &mut tx,
+        Some(org_id),
         "proof_verified",
         Some(request_id),
-        serde_json::json!({ "org_id": org_id, "user_id": user_id, "proof_id": proof_id, "valid": true }),
+        serde_json::json!({ "user_id": user_id, "proof_id": proof_id, "valid": true }),
     )
     .await?;
 
@@ -384,6 +443,60 @@ async fn submit_proof(
     State(state): State<AppState>,
     Json(body): Json<SubmitProofBody>,
 ) -> ApiResult<(StatusCode, Json<SubmitProofResponse>)> {
+    match verify_against_request(&state, &headers, id, None, &body.public_inputs, &body.proof).await? {
+        VerificationOutcome::Valid { proof_id, .. } => Ok((
+            StatusCode::CREATED,
+            Json(SubmitProofResponse {
+                proof_id,
+                valid: true,
+                request_status: DisclosureStatus::Fulfilled.as_str().to_string(),
+            }),
+        )),
+        VerificationOutcome::Invalid { proof_id } => Ok((
+            StatusCode::CREATED,
+            Json(SubmitProofResponse {
+                proof_id,
+                valid: false,
+                request_status: DisclosureStatus::Pending.as_str().to_string(),
+            }),
+        )),
+    }
+}
+
+/// What a verification attempt produced. `Invalid` is a normal outcome, not
+/// an error: a caller sending a wrong-but-well-formed proof gets a recorded
+/// rejection, and it's the *caller's* business whether that becomes a 201
+/// with `valid: false` (this module's own route) or a 400 (issuance, where
+/// there is no token to mint).
+pub(crate) enum VerificationOutcome {
+    Valid { proof_id: Uuid, proof_bytes: Vec<u8> },
+    Invalid { proof_id: Uuid },
+}
+
+/// The whole verification pipeline for one disclosure request: authorize,
+/// check the request is still pending, pack and range-check the public
+/// inputs, bind the nonce, run `bb verify`, and record the result —
+/// consuming the nonce atomically on a pass.
+///
+/// Extracted from `submit_proof` so `issuance::issue_proof` runs *this*
+/// code rather than a second implementation of it. A parallel copy would
+/// have been the obvious way to add token issuance and the wrong one: the
+/// nonce-consumption transaction and the "invalid proofs must not burn the
+/// holder's nonce" rule below are exactly the kind of security-relevant
+/// detail that drifts between two copies.
+///
+/// `expected_circuit`, when supplied, asserts the request really is for the
+/// circuit the caller thinks it is. Issuance passes the circuit its
+/// predicate maps to, which stops an `identity_session` proof from being
+/// laundered into a token claiming an income predicate.
+pub(crate) async fn verify_against_request(
+    state: &AppState,
+    headers: &HeaderMap,
+    id: Uuid,
+    expected_circuit: Option<CircuitType>,
+    public_inputs: &[String],
+    proof_b64: &str,
+) -> ApiResult<VerificationOutcome> {
     let row = sqlx::query!(
         r#"
         select org_id, user_id, circuit_type, status, nonce, expires_at
@@ -396,7 +509,7 @@ async fn submit_proof(
     .await?
     .ok_or(ApiError::NotFound)?;
 
-    authorize_org_or_user(&state, &headers, row.org_id, row.user_id).await?;
+    authorize_org_or_user(state, headers, row.org_id, row.user_id).await?;
 
     let stored_status = DisclosureStatus::parse(&row.status).unwrap_or(DisclosureStatus::Pending);
     let status = effective_status(&state.db, id, stored_status, row.expires_at).await?;
@@ -407,20 +520,31 @@ async fn submit_proof(
     let circuit = CircuitType::parse(&row.circuit_type).ok_or_else(|| {
         ApiError::Other(anyhow::anyhow!("stored circuit_type '{}' is not a known circuit", row.circuit_type))
     })?;
+
+    if let Some(expected) = expected_circuit {
+        if expected != circuit {
+            return Err(ApiError::BadRequest(format!(
+                "disclosure request {id} is for circuit '{}', but the requested predicate requires '{}'",
+                circuit.as_str(),
+                expected.as_str(),
+            )));
+        }
+    }
+
     let layout = public_input_layout(circuit);
 
-    if body.public_inputs.len() != layout.count {
+    if public_inputs.len() != layout.count {
         return Err(ApiError::BadRequest(format!(
             "{} expects exactly {} public inputs, got {}",
             circuit.as_str(),
             layout.count,
-            body.public_inputs.len()
+            public_inputs.len()
         )));
     }
 
     let mut packed = Vec::with_capacity(32 * layout.count);
     let mut field_bytes: Vec<[u8; 32]> = Vec::with_capacity(layout.count);
-    for (i, s) in body.public_inputs.iter().enumerate() {
+    for (i, s) in public_inputs.iter().enumerate() {
         let bytes = parse_field_hex(i, s)?;
         packed.extend_from_slice(&bytes);
         field_bytes.push(bytes);
@@ -449,10 +573,10 @@ async fn submit_proof(
         return Err(ApiError::Conflict("this nonce has already been used to fulfill a disclosure request".into()));
     }
 
-    let proof_bytes = decode_b64("proof", &body.proof)?;
-    let valid = run_bb_verify(&state.config, circuit, &packed, &proof_bytes).await?;
+    let proof_bytes = decode_b64("proof", proof_b64)?;
+    let valid = run_bb_verify(state, circuit, &packed, &proof_bytes).await?;
 
-    let public_inputs_json = serde_json::to_value(&body.public_inputs)
+    let public_inputs_json = serde_json::to_value(public_inputs)
         .map_err(|e| ApiError::Other(anyhow::anyhow!("public_inputs did not serialize: {e}")))?;
 
     if !valid {
@@ -481,34 +605,44 @@ async fn submit_proof(
         // join finds it.
         crate::audit::record(
             &state.db,
+            Some(row.org_id),
             "proof_verification_failed",
             Some(id),
-            serde_json::json!({ "org_id": row.org_id, "user_id": row.user_id, "proof_id": proof_id, "valid": false }),
+            serde_json::json!({ "user_id": row.user_id, "proof_id": proof_id, "valid": false }),
         )
         .await?;
 
-        return Ok((
-            StatusCode::CREATED,
-            Json(SubmitProofResponse {
-                proof_id,
-                valid: false,
-                request_status: DisclosureStatus::Pending.as_str().to_string(),
-            }),
-        ));
+        return Ok(VerificationOutcome::Invalid { proof_id });
     }
 
     match record_valid_proof(&state.db, id, row.org_id, row.user_id, &row.nonce, &public_inputs_json, &proof_bytes).await? {
-        RecordOutcome::Recorded { proof_id } => Ok((
-            StatusCode::CREATED,
-            Json(SubmitProofResponse {
-                proof_id,
-                valid: true,
-                request_status: DisclosureStatus::Fulfilled.as_str().to_string(),
-            }),
-        )),
+        RecordOutcome::Recorded { proof_id } => Ok(VerificationOutcome::Valid { proof_id, proof_bytes }),
         RecordOutcome::Replayed => {
             Err(ApiError::Conflict("this nonce has already been used to fulfill a disclosure request".into()))
         }
+    }
+}
+
+/// Issuance-facing wrapper: verify a freshly-submitted proof and return the
+/// verified proof bytes, treating a cryptographic failure as an error
+/// rather than a recorded outcome. A rejected proof still lands in `proofs`
+/// and the audit chain (inside `verify_against_request`) — the caller just
+/// has nothing to sign.
+pub(crate) async fn verify_and_consume(
+    state: &AppState,
+    headers: &HeaderMap,
+    request_id: Uuid,
+    expected_circuit: Option<CircuitType>,
+    public_inputs: &[String],
+    proof_b64: &str,
+) -> ApiResult<Vec<u8>> {
+    match verify_against_request(state, headers, request_id, expected_circuit, public_inputs, proof_b64).await? {
+        VerificationOutcome::Valid { proof_bytes, .. } => Ok(proof_bytes),
+        VerificationOutcome::Invalid { .. } => Err(ApiError::BadRequest(
+            "proof failed cryptographic verification against the circuit's verification key; \
+             no attestation issued"
+                .into(),
+        )),
     }
 }
 
@@ -560,6 +694,46 @@ mod tests {
         assert_eq!(public_input_layout(CircuitType::AiSession).count, 7);
         assert_eq!(public_input_layout(CircuitType::TaxSession).count, 8);
         assert_eq!(public_input_layout(CircuitType::IdentitySession).count, 8);
+        // 11 public parameters + 1 public return value.
+        assert_eq!(public_input_layout(CircuitType::WealthSuitability).count, 12);
+    }
+
+    #[test]
+    fn every_layout_indexes_inside_its_own_bounds() {
+        // An out-of-range index here would be an immediate panic on the
+        // first real submission for that circuit — cheap to rule out, and
+        // the exact mistake adding a fifth circuit invites.
+        for circuit in ALL_CIRCUITS {
+            let layout = public_input_layout(circuit);
+            assert!(
+                layout.nonce_index < layout.count,
+                "{}: nonce_index {} is outside a {}-element public input vector",
+                circuit.as_str(),
+                layout.nonce_index,
+                layout.count,
+            );
+            if let Some(outcome) = layout.outcome_index {
+                assert!(outcome < layout.count, "{}: outcome_index out of bounds", circuit.as_str());
+                assert_ne!(outcome, layout.nonce_index, "{}: outcome aliases the nonce", circuit.as_str());
+            }
+        }
+    }
+
+    #[test]
+    fn only_wealth_suitability_reports_an_outcome() {
+        // The four session circuits assert their predicate, so there is
+        // nothing to read out; wealth answers a question. If a future
+        // circuit gains an output, this test should be updated deliberately
+        // rather than the caller silently ignoring it.
+        assert_eq!(public_input_layout(CircuitType::WealthSuitability).outcome_index, Some(11));
+        for circuit in [
+            CircuitType::EmergencySession,
+            CircuitType::AiSession,
+            CircuitType::TaxSession,
+            CircuitType::IdentitySession,
+        ] {
+            assert_eq!(public_input_layout(circuit).outcome_index, None, "{}", circuit.as_str());
+        }
     }
 
     mod db {
@@ -809,6 +983,14 @@ mod tests {
                 bb_bin: std::env::var("BB_BIN").unwrap_or_else(|_| "bb".into()),
                 circuits_target_dir: format!("{}/../../circuits/target", env!("CARGO_MANIFEST_DIR")),
                 vkeys_dir: vkeys_dir.to_string_lossy().into_owned(),
+                issuer_base_url: "https://api.memtara.test".into(),
+                proof_token_ttl_seconds: 300,
+                published_wealth_vkey_path: format!(
+                    "{}/../../circuits/wealth_suitability/vkey/vk",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                proof_rate_limit: 10,
+                proof_rate_limit_window: std::time::Duration::from_secs(60),
             }
         }
 
@@ -858,7 +1040,7 @@ mod tests {
             let garbage_public_inputs = vec![0u8; 32 * layout.count];
             let garbage_proof = vec![0xABu8; 14_656];
 
-            let valid = run_bb_verify(&config, CircuitType::EmergencySession, &garbage_public_inputs, &garbage_proof)
+            let valid = run_bb_verify_inner(&config, CircuitType::EmergencySession, &garbage_public_inputs, &garbage_proof)
                 .await
                 .expect("run_bb_verify should run bb successfully and report a real accept/reject, not error");
             assert!(!valid, "a garbage proof must be rejected by the real bb binary, not accepted");

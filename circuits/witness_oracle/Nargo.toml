@@ -1,0 +1,9 @@
+[package]
+name = "witness_oracle"
+type = "bin"
+authors = [""]
+compiler_version = ">=1.0.0"
+
+[dependencies]
+memtara_circuits = { path = "../lib" }
+poseidon = { tag = "v0.3.0", git = "https://github.com/noir-lang/poseidon" }

@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Executable shim so `memtara-prove` works from a checkout, with no install.
+
+A bank evaluating this will run it before they package it, and `pip install
+-e` as step one of a security review is friction that buys nothing here — the
+package has no dependencies to resolve.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from prover.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

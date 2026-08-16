@@ -1,0 +1,19 @@
+# Cloudflare Pages reads this file and does not serve it.
+#
+# The header set mirrors what ai.aihoots.com already returns, so both
+# properties present the same security posture to a scanner. A prospect running
+# securityheaders.io against the marketing site of a governance product is a
+# thing that happens, and a B grade on that page is an unforced own goal.
+#
+# The CSP is deliberately tight: the page has no scripts of its own (the
+# use-case tabs are CSS `:checked` selectors precisely so that this line can
+# stay strict), and the only third-party origins are the two Google Fonts hosts
+# the live site already depends on.
+
+/*
+  Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; script-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), interest-cohort=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains

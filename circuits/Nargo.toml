@@ -5,5 +5,7 @@ members = [
     "ai_session",
     "tax_session",
     "identity_session",
+    "wealth_suitability",
+    "witness_oracle",
 ]
 default-member = "lib"

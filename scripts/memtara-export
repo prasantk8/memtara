@@ -1,0 +1,31 @@
+#!/bin/sh
+# `memtara-export` — the literal command the runbook and the exporter's own
+# --help refer to, working straight from a git checkout with no pip install.
+#
+# There is no packaging step in this repo (see requirements-dev.txt: the
+# Python side is two integration tests, a device client and two report
+# generators), so a console_scripts entry point would mean introducing a
+# build system for one script. This shim is the smaller change and it keeps
+# the tool runnable from a working tree the moment it is cloned, which is the
+# state a compliance officer's laptop is usually in.
+#
+# Interpreter choice, in order: MEMTARA_PYTHON if set, then the repo's .venv
+# (which is where `cryptography` lives, and signing a pack needs it), then
+# python3 from PATH. Picking the venv without being asked is deliberate —
+# `python3 scripts/export_audit_evidence.py --signing-key ...` failing on a
+# missing import is a confusing way to learn about a virtualenv.
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
+repo=$(dirname "$here")
+
+python=${MEMTARA_PYTHON:-}
+if [ -z "$python" ]; then
+    if [ -x "$repo/.venv/bin/python" ]; then
+        python="$repo/.venv/bin/python"
+    else
+        python=python3
+    fi
+fi
+
+exec "$python" "$here/export_audit_evidence.py" "$@"

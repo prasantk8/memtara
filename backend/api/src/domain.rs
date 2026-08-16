@@ -43,8 +43,15 @@ impl OrgType {
     }
 }
 
-/// Matches the 4 real circuits under `circuits/` — every disclosure request
+/// Matches the 5 real circuits under `circuits/` — every disclosure request
 /// names exactly one of these; there is no "generic" circuit.
+///
+/// Adding a variant here is not sufficient on its own. A new circuit also
+/// needs an entry in `verify::public_input_layout` and membership in
+/// `verify::ALL_CIRCUITS` (so its verification key gets generated at boot),
+/// and the `disclosure_requests.circuit_type` check constraint has to allow
+/// the string. `verify`'s tests assert the first two; the migration covers
+/// the third.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CircuitType {
@@ -52,6 +59,7 @@ pub enum CircuitType {
     AiSession,
     TaxSession,
     IdentitySession,
+    WealthSuitability,
 }
 
 impl CircuitType {
@@ -61,6 +69,7 @@ impl CircuitType {
             CircuitType::AiSession => "ai_session",
             CircuitType::TaxSession => "tax_session",
             CircuitType::IdentitySession => "identity_session",
+            CircuitType::WealthSuitability => "wealth_suitability",
         }
     }
 
@@ -70,6 +79,7 @@ impl CircuitType {
             "ai_session" => Some(CircuitType::AiSession),
             "tax_session" => Some(CircuitType::TaxSession),
             "identity_session" => Some(CircuitType::IdentitySession),
+            "wealth_suitability" => Some(CircuitType::WealthSuitability),
             _ => None,
         }
     }

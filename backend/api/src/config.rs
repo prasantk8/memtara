@@ -39,6 +39,33 @@ pub struct Config {
     /// regenerated on boot if missing). Defaults to `vkeys` under this
     /// crate's manifest dir.
     pub vkeys_dir: String,
+    /// Public base URL of this deployment. Stamped into every proof token's
+    /// `iss` claim and used to build the JWKS URL a relying party is told
+    /// to fetch. Must match what clients actually reach, or a relying party
+    /// validating `iss` will reject otherwise-good tokens.
+    ///
+    /// Note what is NOT here: the Ed25519 private key. `Config` derives
+    /// `Debug` and is cloned into `AppState`, so a secret held on it would
+    /// eventually reach a log line. The key is loaded straight from the
+    /// environment into `crypto::signer::IssuerKey`, which has no `Debug`.
+    pub issuer_base_url: String,
+    /// Lifetime of an issued proof token. 300s (5 minutes) by default —
+    /// short enough that the tokens' non-revocability is bounded, long
+    /// enough to survive a slow relying-party round trip. See the §6(f)
+    /// caveat in docs/REGULATORY_MATRIX.md before raising it.
+    pub proof_token_ttl_seconds: i64,
+    /// The verification key published alongside the source, which an
+    /// examiner would use to re-verify a suitability proof independently of
+    /// this server. `GET /health` compares it against the key actually in
+    /// use and reports the instance degraded if they differ — see
+    /// ops/health.rs for why a silent divergence is the dangerous case.
+    pub published_wealth_vkey_path: String,
+    /// Proof submissions permitted per user per window on
+    /// `/api/v1/submit-wealth-proof`. Bounds the only genuinely expensive
+    /// operation this server performs. See ops/rate_limit.rs for what this
+    /// does and does not defend.
+    pub proof_rate_limit: u32,
+    pub proof_rate_limit_window: Duration,
 }
 
 impl Config {
@@ -80,6 +107,25 @@ impl Config {
                 .unwrap_or_else(|_| format!("{}/../../circuits/target", env!("CARGO_MANIFEST_DIR"))),
             vkeys_dir: env::var("VKEYS_DIR")
                 .unwrap_or_else(|_| format!("{}/vkeys", env!("CARGO_MANIFEST_DIR"))),
+            issuer_base_url: env::var("MEMTARA_ISSUER_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:8080".into()),
+            proof_token_ttl_seconds: env::var("MEMTARA_PROOF_TOKEN_TTL_SECONDS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(300),
+            published_wealth_vkey_path: env::var("MEMTARA_PUBLISHED_WEALTH_VKEY").unwrap_or_else(|_| {
+                format!("{}/../../circuits/wealth_suitability/vkey/vk", env!("CARGO_MANIFEST_DIR"))
+            }),
+            proof_rate_limit: env::var("MEMTARA_PROOF_RATE_LIMIT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10),
+            proof_rate_limit_window: Duration::from_secs(
+                env::var("MEMTARA_PROOF_RATE_LIMIT_WINDOW_SECONDS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(60),
+            ),
         })
     }
 }

@@ -1,0 +1,3 @@
+[submodule "tests/aihoots_reference"]
+	path = tests/aihoots_reference
+	url = https://github.com/prasantk8/aihoots-e1-audit-gateway.git

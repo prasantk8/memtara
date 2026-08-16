@@ -242,10 +242,10 @@ async fn create_disclosure_request(
     // scope an org to only its own trail.
     crate::audit::record(
         &state.db,
+        Some(row.org_id),
         "disclosure_request_created",
         Some(row.id),
         serde_json::json!({
-            "org_id": row.org_id,
             "user_id": row.user_id,
             "circuit_type": row.circuit_type,
             "ttl_seconds": body.ttl_seconds,
@@ -438,9 +438,10 @@ async fn revoke_disclosure_request(
         Some(status) => {
             crate::audit::record(
                 &state.db,
+                Some(row.org_id),
                 "disclosure_request_revoked",
                 Some(id),
-                serde_json::json!({ "org_id": row.org_id, "user_id": row.user_id }),
+                serde_json::json!({ "user_id": row.user_id }),
             )
             .await?;
             Ok(Json(RevokeResponse { id, status }))
@@ -652,6 +653,15 @@ mod tests {
                     client_id: "test".into(),
                     redirect_uri: "http://localhost/cb".into(),
                 }),
+                signer: std::sync::Arc::new(crate::crypto::signer::IssuerKey::from_seed(
+                    [0u8; 32],
+                    "https://api.memtara.test",
+                )),
+                metrics: std::sync::Arc::new(crate::ops::metrics::Metrics::default()),
+                rate_limiter: std::sync::Arc::new(crate::ops::rate_limit::RateLimiter::new(
+                    10,
+                    std::time::Duration::from_secs(60),
+                )),
             };
 
             // Matching org's real API key: allowed.

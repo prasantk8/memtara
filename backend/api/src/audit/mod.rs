@@ -5,22 +5,24 @@
 // applied one; see that file for why `created_at` alone isn't a safe total
 // order for the chain).
 //
-// Chain scope: GLOBAL, not per-org. Two reasons:
-//   1. `audit_log` has no `org_id` column to key a per-org chain off of, and
-//      `ref_id` is heterogeneous — depending on `event_type` it names a
-//      `disclosure_requests` row (created/revoked/proof events) or, in
-//      principle, some other entity later. There's no single reliable join
-//      target to answer "what is this org's previous row" without already
-//      committing to the disclosure-centric convention this module uses.
-//   2. A global chain is a *stronger* tamper-evidence property than a
-//      per-org one, not a weaker one: it also commits to the real
-//      interleaving order of events across every org, so tampering with
-//      history can't hide by, e.g., reordering events between two orgs'
-//      otherwise-independent chains. `GET /orgs/:id/audit-log` still gives
-//      each org only its own rows (filtered via a join through
-//      `disclosure_requests.org_id` — see below), it just proves them
-//      against a chain that spans the whole log, not a chain scoped to
-//      that filter.
+// Chain scope: GLOBAL, not per-org — and it stayed that way when
+// `audit_log.org_id` arrived in migrations/0005. That column made a per-org
+// chain *possible*, which is exactly why it is worth saying why we still
+// don't want one:
+//
+//   A global chain is a STRONGER tamper-evidence property than a per-org
+//   one, not a weaker one. It commits to the real interleaving order of
+//   events across every tenant, so history cannot be doctored by reordering
+//   events between two orgs' otherwise-independent chains — and it means one
+//   deleted row is detectable by every tenant downstream of it, not only by
+//   the one it belonged to.
+//
+// `GET /orgs/:id/audit-log` still shows each org only its own rows. That
+// endpoint returns a *filtered view* of one chain, not a chain: consecutive
+// rows in the response will normally have non-consecutive `seq`, and their
+// `prev_hash` values point at rows the caller cannot see. Verifying linkage
+// therefore requires the whole log; the per-tenant view proves membership
+// and position, not adjacency.
 //
 // Hash function: SHA-256, matching `auth::session_token::hash_token`'s
 // choice (the only other "hash a secret/value for integrity" precedent in
@@ -107,6 +109,10 @@ pub(crate) fn compute_event_hash(
 
 pub struct AuditEntry {
     pub id: Uuid,
+    /// The tenant this event belongs to. `None` only for events that
+    /// genuinely have no owning org (none today) and for rows written before
+    /// migrations/0005.
+    pub org_id: Option<Uuid>,
     pub event_type: String,
     pub ref_id: Option<Uuid>,
     pub event_hash: Vec<u8>,
@@ -121,6 +127,7 @@ pub struct AuditEntry {
 /// with some other write the caller is already doing.
 async fn append_locked(
     conn: &mut PgConnection,
+    org_id: Option<Uuid>,
     event_type: &str,
     ref_id: Option<Uuid>,
     payload: &serde_json::Value,
@@ -138,16 +145,35 @@ async fn append_locked(
             .fetch_optional(&mut *conn)
             .await?;
 
-    let payload_bytes = serde_json::to_vec(payload)
+    // `org_id` goes into the hashed payload here, in exactly one place,
+    // rather than being left to each call site to remember. That is what
+    // makes `audit_log.org_id` — which is outside the hash, see
+    // migrations/0005 — safe to rely on for tenant filtering: the column can
+    // only disagree with the chain if someone edits the database directly,
+    // and then it disagrees with a digest that anyone holding the payload can
+    // recompute. Overwriting rather than merging is deliberate: a caller that
+    // passes a different `org_id` in its own payload is confused, and the
+    // authenticated one must win.
+    let payload = match (org_id, payload) {
+        (Some(id), serde_json::Value::Object(map)) => {
+            let mut map = map.clone();
+            map.insert("org_id".into(), serde_json::json!(id));
+            serde_json::Value::Object(map)
+        }
+        _ => payload.clone(),
+    };
+
+    let payload_bytes = serde_json::to_vec(&payload)
         .map_err(|e| ApiError::Other(anyhow::anyhow!("audit payload did not serialize: {e}")))?;
     let event_hash = compute_event_hash(event_type, ref_id, prev_hash.as_deref(), &payload_bytes);
 
     let row = sqlx::query!(
         r#"
-        insert into audit_log (event_type, ref_id, event_hash, prev_hash)
-        values ($1, $2, $3, $4)
+        insert into audit_log (org_id, event_type, ref_id, event_hash, prev_hash)
+        values ($1, $2, $3, $4, $5)
         returning id, created_at
         "#,
+        org_id,
         event_type,
         ref_id,
         event_hash,
@@ -158,6 +184,7 @@ async fn append_locked(
 
     Ok(AuditEntry {
         id: row.id,
+        org_id,
         event_type: event_type.to_string(),
         ref_id,
         event_hash,
@@ -171,12 +198,13 @@ async fn append_locked(
 /// after a plain single-statement UPDATE/INSERT completes).
 pub async fn record(
     db: &PgPool,
+    org_id: Option<Uuid>,
     event_type: &str,
     ref_id: Option<Uuid>,
     payload: serde_json::Value,
 ) -> ApiResult<AuditEntry> {
     let mut tx = db.begin().await?;
-    let entry = append_locked(&mut *tx, event_type, ref_id, &payload).await?;
+    let entry = append_locked(&mut *tx, org_id, event_type, ref_id, &payload).await?;
     tx.commit().await?;
     Ok(entry)
 }
@@ -189,11 +217,12 @@ pub async fn record(
 /// same transaction.
 pub async fn record_in_tx(
     tx: &mut sqlx::PgTransaction<'_>,
+    org_id: Option<Uuid>,
     event_type: &str,
     ref_id: Option<Uuid>,
     payload: serde_json::Value,
 ) -> ApiResult<AuditEntry> {
-    append_locked(&mut **tx, event_type, ref_id, &payload).await
+    append_locked(&mut **tx, org_id, event_type, ref_id, &payload).await
 }
 
 // ---------------------------------------------------------------------
@@ -203,6 +232,14 @@ pub async fn record_in_tx(
 #[derive(Serialize)]
 struct AuditLogEntryResponse {
     id: Uuid,
+    /// Position in the global chain. Exposed because a tenant's view is a
+    /// *filter* over one global hash chain, not a chain of its own — so
+    /// consecutive rows here will normally have non-consecutive `seq`, and a
+    /// consumer that tried to check `prev_hash == previous.event_hash`
+    /// across this filtered list would be checking something that was never
+    /// true. `scripts/export_audit_evidence.py` uses `seq` to say where in
+    /// the whole log an excerpt sits.
+    seq: i64,
     event_type: String,
     ref_id: Option<Uuid>,
     event_hash: String,
@@ -210,12 +247,20 @@ struct AuditLogEntryResponse {
     created_at: DateTime<Utc>,
 }
 
-/// An org's own trail: every audit_log row whose `ref_id` names one of
-/// *this* org's disclosure requests (the convention every call site in
-/// `disclosure::`/`verify::` follows — see their `audit::record(...)`
-/// calls, which all pass the disclosure request's id as `ref_id`).
-/// `OrgAuth`-guarded, and additionally checked against the `:id` path
-/// param so a valid key only ever exposes its own org's trail.
+/// An org's own trail. `OrgAuth`-guarded, and additionally checked against
+/// the `:id` path param so a valid key only ever exposes its own org's
+/// trail.
+///
+/// Two attribution paths, unioned, because the log spans both eras: rows
+/// written since migrations/0005 carry `org_id` directly, and rows written
+/// before it are attributed the old way — by joining `ref_id` to one of this
+/// org's disclosure requests, which is the convention every call site in
+/// `disclosure::`/`verify::` already followed. Dropping the join would
+/// silently truncate every tenant's history at the migration boundary.
+///
+/// Events that name no disclosure request — a product registered, its terms
+/// amended — are only reachable through the first path, which is the reason
+/// the column exists.
 async fn get_org_audit_log(
     OrgAuth(auth_org_id): OrgAuth,
     Path(path_org_id): Path<Uuid>,
@@ -227,10 +272,13 @@ async fn get_org_audit_log(
 
     let rows = sqlx::query!(
         r#"
-        select al.id, al.event_type, al.ref_id, al.event_hash, al.prev_hash, al.created_at
+        select al.id, al.event_type, al.ref_id, al.event_hash, al.prev_hash, al.created_at,
+               al.seq as "seq!"
         from audit_log al
-        join disclosure_requests dr on dr.id = al.ref_id
-        where dr.org_id = $1
+        where al.org_id = $1
+           or (al.org_id is null
+               and exists (select 1 from disclosure_requests dr
+                            where dr.id = al.ref_id and dr.org_id = $1))
         order by al.seq asc
         "#,
         path_org_id,
@@ -242,6 +290,7 @@ async fn get_org_audit_log(
         rows.into_iter()
             .map(|r| AuditLogEntryResponse {
                 id: r.id,
+                seq: r.seq,
                 event_type: r.event_type,
                 ref_id: r.ref_id,
                 event_hash: encode_b64(&r.event_hash),
@@ -382,26 +431,45 @@ mod tests {
             PgPoolOptions::new().max_connections(10).connect(&url).await.ok()
         }
 
-        /// Real-DB version of the chain-linkage property: append several
-        /// events for real via `record`, then re-read the *whole table*
-        /// back and confirm every row's `prev_hash` equals the immediately
-        /// preceding row's `event_hash` in `(created_at, id)` order — the
-        /// same property `get_org_audit_log` and any external auditor would
-        /// check.
+        /// Real-DB version of the chain-linkage property: append events
+        /// for real, re-read them from Postgres, and confirm each one's
+        /// `prev_hash` really is the previous row's `event_hash` and each
+        /// `event_hash` really is a function of that row's own stored
+        /// contents — the exact walk an external auditor performs.
         ///
-        /// Deliberately does NOT assume `e2.prev_hash == e1.event_hash`
-        /// directly: the chain is process-wide/global (see module doc
-        /// comment), `cargo test` runs test functions concurrently by
-        /// default, and several other modules' db tests (disclosure,
-        /// verify) call `audit::record` for real as part of their own
-        /// flows — so another test's event can genuinely land between this
-        /// test's `e1` and `e2` in the real chain. That's not a bug; a
-        /// global chain is supposed to capture the true interleaving of
-        /// concurrent writers. So this test checks the property that's
-        /// actually load-bearing (the whole chain is genuinely linked, and
-        /// our 3 events appear in the order we inserted them somewhere in
-        /// it), not an assumption that nothing else writes to `audit_log`
-        /// while this test runs.
+        /// The three appends go through `record_in_tx` inside ONE
+        /// transaction, and that is load-bearing rather than incidental.
+        /// `append_locked` takes `pg_advisory_xact_lock`, which is held
+        /// until the transaction ends, so no other writer can interleave a
+        /// row between our three — they are guaranteed adjacent in `seq`,
+        /// and adjacency is exactly what a linkage assertion needs.
+        ///
+        /// The obvious alternative — three separate `record` calls, then
+        /// walk every row in the resulting seq window — was tried and is
+        /// genuinely unsound as a test, for two independent reasons:
+        ///
+        ///   1. `cargo test` runs test functions concurrently, and other
+        ///      modules' db tests (disclosure, verify) call `audit::record`
+        ///      for real, so foreign rows land between ours. Survivable —
+        ///      just walk the window rather than assuming adjacency.
+        ///   2. Fatal: those same tests DELETE their audit rows in cleanup
+        ///      (`delete from audit_log where ref_id in (...)`, see
+        ///      disclosure/mod.rs and verify/mod.rs). A foreign row can be
+        ///      inserted between ours and then deleted before we read,
+        ///      leaving a hole in the window. The walk then compares two
+        ///      rows that were never adjacent and reports a broken chain
+        ///      when nothing is broken.
+        ///
+        /// No window-based formulation survives (2), because the deletes
+        /// are concurrent with the read. Holding the chain lock across all
+        /// three appends removes the interleaving instead of trying to
+        /// tolerate it, which is why this test is structured that way.
+        ///
+        /// (Those cleanup deletes are also the whole explanation for any
+        /// `prev_hash` in a dev database that points at a row which is no
+        /// longer there. That is test housekeeping leaving holes, not
+        /// evidence of a forked chain — nothing in the production code path
+        /// ever deletes from `audit_log`.)
         #[tokio::test]
         async fn appended_entries_form_a_real_chain_in_postgres() {
             let Some(db) = test_pool().await else {
@@ -410,53 +478,45 @@ mod tests {
             };
 
             let ref_id = Uuid::new_v4();
-            let e1 = record(&db, "test_event_a", Some(ref_id), serde_json::json!({"n": 1})).await.unwrap();
-            let e2 = record(&db, "test_event_b", Some(ref_id), serde_json::json!({"n": 2})).await.unwrap();
-            let e3 = record(&db, "test_event_c", Some(ref_id), serde_json::json!({"n": 3})).await.unwrap();
+            let payloads = [
+                serde_json::json!({"n": 1}),
+                serde_json::json!({"n": 2}),
+                serde_json::json!({"n": 3}),
+            ];
+            let types = ["test_event_a", "test_event_b", "test_event_c"];
 
-            // Every row's persisted event_hash must be a real function of
-            // its own stored fields — not "whatever record() happened to
-            // return" but reproducible from scratch.
-            let recomputed_e2 = compute_event_hash(
-                "test_event_b",
-                Some(ref_id),
-                e2.prev_hash.as_deref(),
-                &serde_json::to_vec(&serde_json::json!({"n": 2})).unwrap(),
-            );
-            assert_eq!(recomputed_e2, e2.event_hash);
+            let mut tx = db.begin().await.unwrap();
+            let mut appended = Vec::new();
+            for (event_type, payload) in types.iter().zip(payloads.iter()) {
+                appended.push(record_in_tx(&mut tx, None, event_type, Some(ref_id), payload.clone()).await.unwrap());
+            }
+            tx.commit().await.unwrap();
 
-            // Walk every row committed between e1 and e3 (inclusive) — a
-            // contiguous slice of the global chain, whoever wrote the rows
-            // — and confirm each one's prev_hash equals the row
-            // immediately before it in true insertion order.
-            //
-            // Order by `seq` (migrations/0002_audit_log_seq.sql), not
-            // `created_at`: this test runs concurrently with every other
-            // `cargo test` DB test that also calls `audit::record` as a side
-            // effect (disclosure/verify tests), and `created_at` resolution
-            // can tie under rapid parallel inserts even though
-            // `append_locked`'s advisory lock always serializes the actual
-            // writes correctly. A tie on `created_at` previously fell back
-            // to `id desc` — a random UUID with no relationship to true
-            // insertion order — which is what made this test genuinely
-            // flaky under default (parallel) `cargo test`, not just
-            // occasionally slow. `seq` is a bigserial: allocation order is
-            // strictly monotonic and never ties, so it reproduces true
-            // causal order unconditionally.
+            // Re-read from Postgres rather than trusting what `record_in_tx`
+            // returned: the point is that the persisted rows form the chain,
+            // not that the in-memory return values agree with each other.
             let rows = sqlx::query!(
                 r#"
-                select id, event_hash, prev_hash
+                select id, event_type, event_hash, prev_hash
                 from audit_log
-                where created_at >= $1 and created_at <= $2
+                where ref_id = $1
                 order by seq asc
                 "#,
-                e1.created_at,
-                e3.created_at,
+                ref_id,
             )
             .fetch_all(&db)
             .await
             .unwrap();
 
+            assert_eq!(rows.len(), 3, "all three appends must have committed");
+            for (i, row) in rows.iter().enumerate() {
+                assert_eq!(row.id, appended[i].id, "row {i} out of insertion order");
+                assert_eq!(row.event_type, types[i]);
+            }
+
+            // Linkage: rows 2 and 3 chain to their immediate predecessor.
+            // Row 1 chains to whatever preceded our transaction, which is
+            // some other test's row or nothing — not ours to assert on.
             for i in 1..rows.len() {
                 assert_eq!(
                     rows[i].prev_hash.as_deref(),
@@ -467,19 +527,44 @@ mod tests {
                 );
             }
 
-            // And our three events specifically must appear, in the order
-            // we inserted them, each still carrying the exact event_hash
-            // `record` returned for it.
-            let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
-            let pos1 = ids.iter().position(|&id| id == e1.id).expect("e1 must be in the window");
-            let pos2 = ids.iter().position(|&id| id == e2.id).expect("e2 must be in the window");
-            let pos3 = ids.iter().position(|&id| id == e3.id).expect("e3 must be in the window");
-            assert!(pos1 < pos2 && pos2 < pos3, "our three events must appear in insertion order");
-            assert_eq!(rows[pos1].event_hash, e1.event_hash);
-            assert_eq!(rows[pos2].event_hash, e2.event_hash);
-            assert_eq!(rows[pos3].event_hash, e3.event_hash);
+            // Integrity: every persisted event_hash must be reproducible
+            // from that row's own stored fields. This is what makes the
+            // chain tamper-EVIDENT rather than merely tamper-labelled —
+            // editing a payload after the fact would break this equality
+            // even if prev_hash still lined up.
+            for (i, row) in rows.iter().enumerate() {
+                let recomputed = compute_event_hash(
+                    types[i],
+                    Some(ref_id),
+                    row.prev_hash.as_deref(),
+                    &serde_json::to_vec(&payloads[i]).unwrap(),
+                );
+                assert_eq!(recomputed, row.event_hash, "row {i}'s hash is not a function of its contents");
+            }
 
-            let _ = sqlx::query!("delete from audit_log where id in ($1, $2, $3)", e1.id, e2.id, e3.id)
+            // And `record` (its own transaction, the path most call sites
+            // use) must produce the same self-consistency property.
+            let solo_ref = Uuid::new_v4();
+            let solo_payload = serde_json::json!({"solo": true});
+            let solo = record(&db, None, "test_event_solo", Some(solo_ref), solo_payload.clone()).await.unwrap();
+            let solo_row = sqlx::query!(
+                "select event_hash, prev_hash from audit_log where id = $1",
+                solo.id,
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap();
+            assert_eq!(
+                compute_event_hash(
+                    "test_event_solo",
+                    Some(solo_ref),
+                    solo_row.prev_hash.as_deref(),
+                    &serde_json::to_vec(&solo_payload).unwrap(),
+                ),
+                solo_row.event_hash,
+            );
+
+            let _ = sqlx::query!("delete from audit_log where ref_id in ($1, $2)", ref_id, solo_ref)
                 .execute(&db)
                 .await;
         }
@@ -496,7 +581,7 @@ mod tests {
 
             let ref_id = Uuid::new_v4();
             let mut tx = db.begin().await.unwrap();
-            let entry = record_in_tx(&mut tx, "should_not_persist", Some(ref_id), serde_json::json!({})).await.unwrap();
+            let entry = record_in_tx(&mut tx, None, "should_not_persist", Some(ref_id), serde_json::json!({})).await.unwrap();
             tx.rollback().await.unwrap();
 
             let found: Option<Uuid> = sqlx::query_scalar!("select id from audit_log where id = $1", entry.id)
