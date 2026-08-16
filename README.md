@@ -178,16 +178,43 @@ nargo test --workspace
 nargo compile --workspace --skip-brillig-constraints-check
 ```
 
-### Backend (Rust / Axum)
+### Backend (Rust / Axum) — Running Locally
+
+**Postgres is a build dependency here, not just a runtime one.** The backend
+uses `sqlx::query!`, which resolves every column against a live schema *at
+compile time*. Skip the database and you do not get failing tests — you get a
+build that never starts, reporting `relation "users" does not exist` sixty
+times over. So the order below is not optional: database, then migrations,
+then compiler.
 
 ```bash
 cp .env.example .env        # then set MEMTARA_PRIVATE_KEY
-docker run -d --name memtara-postgres -e POSTGRES_USER=memtara \
-  -e POSTGRES_PASSWORD=memtara -e POSTGRES_DB=memtara -p 5433:5432 postgres:15
 
+# 1. The database. --wait blocks until pg_isready passes, so step 2 cannot
+#    race the container's startup. (Use `docker compose` if your Docker has
+#    the subcommand wired up; both drive the same file.)
+docker-compose up -d --wait postgres
+
+# 2. The schema. Same URL as CI uses, so a query that compiles here compiles there.
 export DATABASE_URL=postgres://memtara:memtara@localhost:5433/memtara
+cargo install sqlx-cli --no-default-features --features postgres,rustls   # once
+(cd backend && sqlx migrate run --source api/migrations)
+
+# 3. Now the compiler has something to check against.
 cd backend && cargo test && cargo run
 ```
+
+Two things that will otherwise cost you an hour:
+
+- **If you already created the container by hand** (`docker run --name
+  memtara-postgres … -p 5433:5432`), `docker compose up` will fail with *port
+  is already allocated*. Either keep using the container you have — it is
+  configured identically — or `docker rm -f memtara-postgres` first.
+- **A missing schema produces errors that point at innocent code.** When the
+  macro cannot type a column, the failure surfaces downstream as a plain Rust
+  error — `backend/api/src/audit/mod.rs` reports *the size for values of type
+  `[u8]` cannot be known at compilation time*, and rustc sometimes ICEs before
+  printing the rest. That line is correct. Run the migrations and it goes away.
 
 `bb` (Barretenberg) must be on `PATH` and the circuits compiled — the server
 generates verification keys at boot and refuses to start otherwise, rather than

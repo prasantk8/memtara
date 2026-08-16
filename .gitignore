@@ -30,6 +30,12 @@ __pycache__/
 # Local secrets (see .env.example)
 .env
 
+# Wrangler's local cache. Holds the Cloudflare account id and account name in
+# .wrangler/cache/wrangler-account.json — not a credential, but it identifies
+# the account to anyone reading a public repo, and it is a tool cache rather
+# than source in any case.
+.wrangler/
+
 # Scratch chain written by scripts/generate_regulatory_demo.py
 /docs/.demo-audit.jsonl
 

@@ -96,6 +96,44 @@ jobs:
         run: cargo fmt --all -- --check
         continue-on-error: true  # formatting is advisory; correctness below is not
 
+      # ------------------------------------------------------------------
+      # Migrations run BEFORE the compiler, not before the tests.
+      #
+      # `sqlx::query!` resolves every column against a live database at macro
+      # expansion time, so an empty Postgres does not produce failing tests —
+      # it produces a build that cannot start. The observable symptom is a wall
+      # of `relation "users" does not exist`, plus cascade errors in code that
+      # is perfectly correct: with the schema missing, the macro cannot give
+      # `r.prev_hash` a type, and audit/mod.rs then fails with
+      # `the size for values of type [u8] cannot be known at compilation time`.
+      # Chasing that E0277 is chasing a shadow. rustc has also been seen to ICE
+      # part-way through, which truncates the error list and hides the cause.
+      #
+      # The service container above gives us a Postgres; it does not give us a
+      # schema. This is the step that does.
+      # ------------------------------------------------------------------
+      - name: Install sqlx-cli
+        # Pinned to the version that generated the migrations, and --locked so
+        # the tool that runs them in CI is the tool that ran them locally.
+        # `rustls` is not in the brief's feature list but is included on
+        # purpose: without a TLS backend this binary can only reach a plaintext
+        # server, which is fine for the service container and breaks the moment
+        # DATABASE_URL points at a managed Postgres. Swatinem/rust-cache caches
+        # ~/.cargo/bin, so this compiles once and is restored thereafter.
+        run: |
+          if command -v sqlx >/dev/null 2>&1; then
+            echo "sqlx-cli already present: $(sqlx --version)"
+            exit 0
+          fi
+          cargo install sqlx-cli --version 0.9.0 \
+            --no-default-features --features postgres,rustls --locked
+
+      - name: Run database migrations
+        working-directory: backend
+        run: |
+          sqlx migrate run --source api/migrations
+          sqlx migrate info --source api/migrations
+
       - name: cargo test
         working-directory: backend
         run: cargo test --all

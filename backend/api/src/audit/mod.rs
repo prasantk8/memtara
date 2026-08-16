@@ -294,7 +294,7 @@ async fn get_org_audit_log(
                 event_type: r.event_type,
                 ref_id: r.ref_id,
                 event_hash: encode_b64(&r.event_hash),
-                prev_hash: r.prev_hash.map(|h| encode_b64(&h)),
+                prev_hash: r.prev_hash.as_ref().map(|h| encode_b64(h)),
                 created_at: r.created_at,
             })
             .collect(),
