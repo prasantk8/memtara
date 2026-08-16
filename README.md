@@ -360,18 +360,3 @@ See [TODO.md](./TODO.md) for detailed implementation phases and progress trackin
 - Org self-registration is still **unauthenticated**. Anyone who can reach
   `POST /orgs` can mint a tenant. Gating it behind an allowlist is a real
   product question and is not built.
-
-## License
-
-MIT License - See LICENSE file for details.
-
-> **Unresolved, and a commercial blocker.** There is no `LICENSE` file in this
-> repository, so the line above points at nothing. A bank's counsel checks this
-> in the first week of diligence, and an unfulfilled licence reference turns a
-> technical review into a legal one.
->
-> It is also a decision rather than a formality: MIT is a broad grant to attach
-> to something being licensed at $25,000 a month, and a source-available or dual
-> licence may serve the commercial model better. Choose deliberately, then add
-> the file. Until then, `docs/PILOT_AGREEMENT_TEMPLATE.md` clause 5.6 tells the
-> Memtara side to disclose the position rather than wait to be asked.
