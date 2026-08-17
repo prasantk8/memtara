@@ -1,0 +1,36 @@
+# Local development database.
+#
+# This exists because `sqlx::query!` checks every query against a real schema
+# at compile time. Postgres is therefore not a runtime dependency of the
+# backend — it is a *build* dependency. Without it, `cargo check` fails before
+# a single test runs. See "Running Locally" in README.md.
+#
+# The settings below are pinned to match .github/workflows/ci.yml exactly:
+# same image tag, same credentials, same port. One DATABASE_URL works in both
+# places, so a query that compiles on a laptop compiles in CI.
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: memtara
+      POSTGRES_PASSWORD: memtara
+      POSTGRES_DB: memtara
+    ports:
+      # 5433, not 5432, so this never collides with a Postgres already
+      # installed on the host — the failure mode of that collision is silent
+      # (you connect to the wrong server and get "relation does not exist",
+      # which reads exactly like a missing migration).
+      - "5433:5432"
+    volumes:
+      - memtara-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `docker-compose up -d --wait postgres` blocks on this, which is what
+      # makes it safe to run `sqlx migrate run` on the very next line.
+      test: ["CMD-SHELL", "pg_isready -U memtara -d memtara"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  memtara-pgdata:

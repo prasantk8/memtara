@@ -1,8 +1,18 @@
 # Memtara Zero-Knowledge Proof System
 
+[![CI](https://github.com/prasantk8/memtara/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/prasantk8/memtara/actions/workflows/ci.yml)
+[![Live demo](https://img.shields.io/badge/Live%20demo-aihoots.com-1f4e79)](https://aihoots.com)
 ![Real ZK Proofs (Baby Jubjub)](https://img.shields.io/badge/Real%20ZK%20Proofs-Baby%20Jubjub-2f6f4e)
 ![DFSA COB 3.4 Ready](https://img.shields.io/badge/DFSA%20COB%203.4-Ready-1f4e79)
 ![CBUAE Guidance Note](https://img.shields.io/badge/CBUAE%20Guidance%20Note-Mapped-1f4e79)
+
+<!-- The CI badge reads the real workflow state; it is not a static image, so it
+     will show "failing" honestly if main breaks. Both links above use the
+     repository's *current* name, `prasantk8/memtara`. Do not "correct" them to
+     `memtara-zkp` — that name does not exist today and the badge would 404. If
+     the repository is renamed (see docs/INFRASTRUCTURE.md § D), these keep
+     working, because GitHub permanently redirects the old path. -->
+
 
 A ZKP implementation for a local-first vault with scoped temporary access,
 selective disclosure, and auditability — and, on top of it, a
@@ -53,8 +63,8 @@ structured-product suitability platform for UAE banks.
 ## Try it in 5 minutes. No credit card required.
 
 ```bash
-git clone --recurse-submodules https://github.com/prasantk8/memtara-zkp.git
-cd memtara-zkp
+git clone --recurse-submodules https://github.com/prasantk8/memtara.git
+cd memtara
 ./scripts/quickstart.sh
 ```
 
