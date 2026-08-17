@@ -108,7 +108,7 @@ printf '\n%sMemtara quickstart%s — a real zero-knowledge suitability proof, en
 info "repository: $REPO_ROOT"
 info "database:   $DATABASE_URL"
 
-[ -f circuits/Nargo.toml ] || die "this does not look like the memtara-zkp repository (no circuits/Nargo.toml)"
+[ -f circuits/Nargo.toml ] || die "this does not look like the memtara repository (no circuits/Nargo.toml)"
 
 # ---------------------------------------------------------------------------
 # 1. The AIHOOTS submodule

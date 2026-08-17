@@ -25,10 +25,12 @@ otherwise, including by omission.
 
 ## Blocker — do not publish until this is fixed
 
-Every repository link below points at `github.com/prasantk8/memtara-zkp`, which
-**returns 404 today.** The repository is currently named `prasantk8/memtara`.
-One rename fixes this file, the README and both live landing pages at once —
-see [`docs/INFRASTRUCTURE.md` § D](../../docs/INFRASTRUCTURE.md#section-d--every-read-the-code-button-on-the-live-site-is-a-404).
+Every repository link below now points at `github.com/prasantk8/memtara`, which
+returns **200** and is public. These links previously read `memtara-zkp`, a name
+that has never existed; they were corrected across the repository on
+18 Aug 2026. The **live** landing pages still serve whatever was last deployed,
+so `wrangler pages deploy` has to run before any of this is published — see
+[`docs/INFRASTRUCTURE.md` § D](../../docs/INFRASTRUCTURE.md#section-d--every-read-the-code-button-on-the-live-site-is-a-404).
 
 `www.aihoots.com` is also returning **522** right now, and browsers autocomplete
 `www.`. Fix [§ C](../../docs/INFRASTRUCTURE.md#section-c--wwwaihootscom-is-returning-522-fix-this-first)
@@ -150,12 +152,12 @@ And the verification key for the suitability circuit is committed, not generated
 at boot, so a proof issued today can be re-verified by someone who does not
 trust our build pipeline.
 
-Current state, precisely: 87 Rust tests, 61 circuit tests, 134 Python tests. No
+Current state, precisely: 87 Rust tests, 61 circuit tests, 196 Python tests. No
 SOC 2. No penetration test. No container image. Zero pilots.
 
 Read it before you talk to us. That ordering is the point.
 
-github.com/prasantk8/memtara-zkp
+github.com/prasantk8/memtara
 
 **Hashtags:** #OpenSource #RegTech #ZeroKnowledgeProofs #Compliance #UAE
 

@@ -17,11 +17,12 @@ with the advisor's time. Send one, not both, to the same firm.
 
 ## Before you send
 
-- **The repository link 404s today.** `github.com/prasantk8/memtara-zkp` does not
-  exist; the repo is `prasantk8/memtara`. Fix it with the rename in
-  [`docs/INFRASTRUCTURE.md` § D](../../docs/INFRASTRUCTURE.md#section-d--every-read-the-code-button-on-the-live-site-is-a-404)
-  before a single send. An email whose one verifiable link is broken fails at
-  exactly the moment it was working.
+- **The repository link resolves.** `github.com/prasantk8/memtara` returns 200
+  and is public. It used to be written `memtara-zkp`, which never existed and
+  404'd in every send — corrected across the repository on 18 Aug 2026. If you
+  are copying this text from an older draft, check the link before you send: an
+  email whose one verifiable link is broken fails at exactly the moment it was
+  working.
 - **`www.aihoots.com` returns 522.** Link the apex, `https://aihoots.com`, never
   `www.` — and fix [§ C](../../docs/INFRASTRUCTURE.md#section-c--wwwaihootscom-is-returning-522-fix-this-first),
   because some clients rewrite bare domains to `www.`.
@@ -67,12 +68,12 @@ with the advisor's time. Send one, not both, to the same firm.
 > Unsubscribe: reply "no thanks" and I will not contact you again.
 >
 > *P.S. — for whoever you forward this to: it's open source. 87 Rust tests,
-> 61 circuit tests, 134 Python tests, all running in CI. Baby Jubjub EdDSA,
+> 61 circuit tests, 196 Python tests, all running in CI. Baby Jubjub EdDSA,
 > Poseidon commitments, Noir circuits, Barretenberg proving, an Ed25519
 > attestation validated against a published JWKS. The suitability circuit's
 > verification key is committed rather than generated at boot, so a proof issued
 > today re-verifies without trusting our build.
-> github.com/prasantk8/memtara-zkp*
+> github.com/prasantk8/memtara*
 
 ---
 

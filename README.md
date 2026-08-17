@@ -7,11 +7,10 @@
 ![CBUAE Guidance Note](https://img.shields.io/badge/CBUAE%20Guidance%20Note-Mapped-1f4e79)
 
 <!-- The CI badge reads the real workflow state; it is not a static image, so it
-     will show "failing" honestly if main breaks. Both links above use the
-     repository's *current* name, `prasantk8/memtara`. Do not "correct" them to
-     `memtara-zkp` — that name does not exist today and the badge would 404. If
-     the repository is renamed (see docs/INFRASTRUCTURE.md § D), these keep
-     working, because GitHub permanently redirects the old path. -->
+     will show "failing" honestly if main breaks. Every repository link in this
+     project uses `prasantk8/memtara`, which is the repository's name. Do not
+     "correct" any of them to `memtara-zkp` — that name has never existed and
+     every such link returns 404. See docs/INFRASTRUCTURE.md § D. -->
 
 
 A ZKP implementation for a local-first vault with scoped temporary access,
@@ -107,7 +106,7 @@ This system implements end-to-end zero-knowledge proofs allowing users to prove 
 ## Project Structure
 
 ```
-memtara-zkp/
+memtara/
 ├── circuits/                    # Noir workspace: a shared lib + 5 binaries
 │   ├── lib/                     # merkle_inclusion, attribute_predicates,
 │   │                            # signature_verify, time_bound, suitability

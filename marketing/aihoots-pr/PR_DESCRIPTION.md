@@ -35,8 +35,9 @@ in the gateway's own README.
 
 ## Before merging
 
-- [ ] Confirm `github.com/prasantk8/memtara-zkp` is public. Every link in the
-      new section and both badges point there.
+- [ ] Confirm `github.com/prasantk8/memtara` is public. Every link in the
+      new section and both badges point there. (It read `memtara-zkp` until
+      18 Aug 2026 — a name that has never existed and 404'd everywhere.)
 - [ ] Confirm `aihoots.com/memtara` resolves. It currently does not — the apex
       domain is serving an infinite redirect loop, tracked separately. If the
       marketing deploy has not happened when this merges, point the two

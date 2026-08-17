@@ -82,7 +82,7 @@ FONT_REGULAR = "F1"
 FONT_BOLD = "F2"
 FONT_OBLIQUE = "F3"
 
-PRODUCER = "memtara-zkp scripts/pdf.py"
+PRODUCER = "memtara scripts/pdf.py"
 
 RULE_GRAY = 0.55
 RULE_WIDTH = 0.6

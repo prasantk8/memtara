@@ -227,44 +227,35 @@ Confirmed against the GitHub API: `prasantk8/memtara` exists, is **public**,
 default branch `main`. **`prasantk8/memtara-zkp` does not exist.** The local git
 remote agrees — `origin` is `https://github.com/prasantk8/memtara.git`.
 
-`memtara-zkp` was hard-coded in **18 places**. The two in
-[`README.md`](../README.md) — the `git clone` in "Try it in 5 minutes", and the
-new CI and live-demo badges — **have been changed to `memtara`**, which works
-today *and* keeps working after a rename, because GitHub permanently redirects
-the old path. The remaining 16 are unchanged and still 404:
+`memtara-zkp` was hard-coded in **18 places**, none of which had ever resolved.
 
-- `marketing/aihoots-pr/public/index.html` — the **GitHub** nav link, the
-  **Clone the repository** button, the **regulatory matrix** link, the footer
-  link, and the clone command in the code sample. **All live at `aihoots.com`
-  right now.**
-- `marketing/aihoots-pr/public/memtara.html` — **Run the demo — one command**
-  and **Read the code**.
-- `marketing/aihoots-pr/README_PATCH.md` — the badge target and clone line.
+### Resolved on 18 Aug 2026 — option 2
 
-### Two ways to fix it. Take the first.
+The repository keeps its name, `prasantk8/memtara`, and **every reference in
+this repository has been rewritten to match it**. Renaming the GitHub
+repository to `memtara-zkp` was rejected: it would have made 18 stale strings
+correct at the cost of invalidating the name that is already public, already in
+`origin`, and already the one that works.
 
-**1. Rename the repository** (one action, fixes all 18 references and the live
-site, no redeploy):
+Corrected: `README_PATCH.md` (badge target, prose link, clone command, `cd`,
+matrix link), `marketing/aihoots-pr/README.md`, `PR_DESCRIPTION.md`,
+`marketing/outreach/LINKEDIN_POST.md`, `marketing/outreach/PILOT_EMAIL.md`,
+`scripts/quickstart.sh:111`, `scripts/pdf.py` (the `/Producer` string stamped
+into every generated PDF), and the project tree in `README.md`.
+`public/index.html` and `public/memtara.html` were corrected earlier in the
+same effort.
 
-```
-https://github.com/prasantk8/memtara/settings
-```
+`LINKEDIN_POST.md` and `PILOT_EMAIL.md` each carried a "do not publish, the
+link 404s" blocker. Those blockers are now false. They have been rewritten
+rather than deleted, so anyone working from an older copy of that text still
+learns which of the two names is the wrong one.
 
-→ **General** → **Repository name** → `memtara-zkp` → **Rename**.
-
-GitHub permanently redirects the old URL, so `prasantk8/memtara` keeps working
-and your local `origin` remote does not need changing (though `git remote
-set-url origin https://github.com/prasantk8/memtara-zkp.git` is worth doing to
-keep it honest). This also matches `scripts/quickstart.sh:111`, which already
-identifies the repo by that name, and `cd memtara-zkp` after cloning.
-
-**2. Or edit all 18 references** to `memtara`, then **redeploy the Pages site** —
-editing the HTML in this repository changes nothing at `aihoots.com` until
-`wrangler pages deploy` runs again. See
-[`DEPLOY.md`](../marketing/aihoots-pr/DEPLOY.md#deploy).
-
-Do not do neither. Every link in the LinkedIn series, the pilot email and the
-landing page points at a 404 until one of them is done.
+**What this does not fix.** Editing HTML in this repository changes nothing at
+`aihoots.com`. The live site keeps serving whatever was last deployed until
+`wrangler pages deploy` runs again — see
+[`DEPLOY.md`](../marketing/aihoots-pr/DEPLOY.md#deploy). Until that runs, the
+buttons named in the heading above are still 404s **for readers**, however
+green this repository looks.
 
 ---
 
@@ -279,11 +270,12 @@ done
 # want: aihoots.com 200
 #       www.aihoots.com 301 -> https://aihoots.com/
 
-# 2. The repository link the whole campaign rests on. Check whichever name you
-#    settled on — both should return 200 once the rename is done, since GitHub
-#    redirects the old path.
-curl -sSL -o /dev/null -w 'memtara-zkp %{http_code}\n' https://github.com/prasantk8/memtara-zkp
-curl -sSL -o /dev/null -w 'memtara     %{http_code}\n' https://github.com/prasantk8/memtara
+# 2. The repository link the whole campaign rests on. `memtara` is the name;
+#    `memtara-zkp` has never existed and should stay a 404 — if it ever answers
+#    200, somebody renamed the repo and every link in this project needs
+#    revisiting.
+curl -sSL -o /dev/null -w 'memtara      %{http_code}\n' https://github.com/prasantk8/memtara
+curl -sSL -o /dev/null -w 'memtara-zkp  %{http_code}\n' https://github.com/prasantk8/memtara-zkp
 
 # 3. Security headers from public/_headers still applied.
 curl -sSI https://aihoots.com/ | grep -i 'content-security-policy\|x-frame-options'

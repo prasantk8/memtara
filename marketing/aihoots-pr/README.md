@@ -86,7 +86,7 @@ git add README.md
 git commit -m "Link Memtara, the ZK engine behind the AIHOOTS platform"
 git push -u origin memtara-companion
 gh pr create --title "Link the Memtara companion" --body-file \
-    /path/to/memtara-zkp/marketing/aihoots-pr/PR_DESCRIPTION.md
+    /path/to/memtara/marketing/aihoots-pr/PR_DESCRIPTION.md
 ```
 
 ## Still needs a real value before launch
@@ -96,7 +96,7 @@ gh pr create --title "Link the Memtara companion" --body-file \
    all: a dead mailto on the root page is worse than sending people to GitHub,
    which is where the checkable material lives anyway. Add a real address to
    both when you have one.
-2. **`github.com/prasantk8/memtara-zkp` must be public.** Both pages and the
+2. **`github.com/prasantk8/memtara` must be public.** Both pages and the
    badge link there repeatedly. If it is private, every link is a 404 for the
    reader, which is worse than not linking at all — and the entire argument of
    the page is "go and check it yourself".

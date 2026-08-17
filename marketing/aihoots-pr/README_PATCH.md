@@ -22,7 +22,7 @@ the control every AI regulation implies and almost nobody ships as working code.
 # AIHOOTS E1 — LLM Audit Gateway
 
 [![Memtara Companion](https://img.shields.io/badge/Memtara-Companion-a86a12)](https://aihoots.com/memtara)
-[![Real ZK Proofs (Baby Jubjub)](https://img.shields.io/badge/Real%20ZK%20Proofs-Baby%20Jubjub-2f6f4e)](https://github.com/prasantk8/memtara-zkp)
+[![Real ZK Proofs (Baby Jubjub)](https://img.shields.io/badge/Real%20ZK%20Proofs-Baby%20Jubjub-2f6f4e)](https://github.com/prasantk8/memtara)
 
 An OpenAI-compatible proxy that produces a **tamper-evident, independently
 verifiable audit trail** of every LLM request, response, and policy decision —
@@ -49,7 +49,7 @@ This gateway makes what a model was told **auditable**. It does not make it
 **true**. A prompt asserting "this client qualifies for the note" is chained
 faithfully and is still just prompt text, which is attacker-controlled.
 
-[Memtara](https://github.com/prasantk8/memtara-zkp) closes that half. A client's
+[Memtara](https://github.com/prasantk8/memtara) closes that half. A client's
 own device generates a zero-knowledge proof that it meets a structured product's
 registered suitability terms; Memtara verifies it and signs a short-lived Ed25519
 attestation; this gateway validates that attestation locally against a published
@@ -60,8 +60,8 @@ The client's income, liquid assets, risk tolerance and holdings never leave
 their device. The bank receives one bit and a proof.
 
 ```bash
-git clone --recurse-submodules https://github.com/prasantk8/memtara-zkp.git
-cd memtara-zkp && ./scripts/quickstart.sh
+git clone --recurse-submodules https://github.com/prasantk8/memtara.git
+cd memtara && ./scripts/quickstart.sh
 ```
 
 Real Baby Jubjub signatures, real Poseidon commitments, real `bb prove` and
@@ -69,7 +69,7 @@ Real Baby Jubjub signatures, real Poseidon commitments, real `bb prove` and
 single flipped byte. Piloted by zero banks so far, and the landing page says so.
 
 **More:** [aihoots.com/memtara](https://aihoots.com/memtara) ·
-[the regulatory matrix](https://github.com/prasantk8/memtara-zkp/blob/main/docs/REGULATORY_MATRIX.md),
+[the regulatory matrix](https://github.com/prasantk8/memtara/blob/main/docs/REGULATORY_MATRIX.md),
 which names its four gaps before any of its coverage.
 ```
 
