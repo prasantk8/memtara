@@ -10,6 +10,15 @@ alongside.
 | --- | --- | --- |
 | `LINKEDIN_SERIES.md` | A five-post LinkedIn series, ready to paste, plus graphic specs and two Mermaid diagrams | The founder, posting under their own name |
 | `LEAD_LIST.md` | The outreach playbook: a blank tracking table, UAE segmentation, buyer roles, the cold-email script and its variants, and a practical compliance note | The founder, doing the outreach |
+| `outreach/LINKEDIN_POST.md` | The five-post launch *sequence* and publishing schedule. Two posts drafted in full here — architecture, and the open-source ethos; the other three point at `LINKEDIN_SERIES.md` rather than duplicating it | The founder, scheduling the launch |
+| `outreach/PILOT_EMAIL.md` | The cold email aimed at a Head of Wealth, paste-ready, with the reasoning for each line and a two-step follow-up cadence | The founder, doing the outreach |
+| `outreach/OBJECTION_HANDLER.md` | The five *procurement* objections — SOC 2, vendor thresholds, price, contract terms, support — and which document answers each | Whoever is handling vendor onboarding |
+
+`LINKEDIN_SERIES.md` and `LEAD_LIST.md` are the long-form source; `outreach/` is
+the paste-ready layer over them. Where the two could disagree, `outreach/` links
+rather than restates — deliberately, because two copies of one post is how the
+stale copy gets published. The deep technical objections live in
+[`docs/SALES_OBJECTION_HANDLER.md`](../docs/SALES_OBJECTION_HANDLER.md).
 
 Everything in this folder is written to be checked. Before editing any of it,
 read the repository's [`README.md`](../README.md) — particularly the
