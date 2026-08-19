@@ -1,0 +1,64 @@
+{
+  "evidence_schema_version": "1.0.0",
+  "decision_id": "82719",
+  "business_process": "wealth_suitability_assessment",
+  "final_decision": {
+    "outcome": "rejected",
+    "decided_at": "2026-08-14T09:12:44Z",
+    "decision_basis": "proof_and_human_review"
+  },
+  "policy": {
+    "policy_id": "DFSA-COB-3.4",
+    "policy_version": "2026.08",
+    "decision_logic_version": "1.4.0",
+    "thresholds": {
+      "threshold_set_id": "conservative-2026H2",
+      "threshold_version": "7",
+      "values": { "min_income": 250000, "min_liquidity": 500000, "max_concentration_percent": 20 }
+    }
+  },
+  "data": {
+    "customer": {
+      "data_provenance": {
+        "vault_root": "0x7ac41e0f2b9d5c8e3a16f04b8d29c7e5a3b10d94f6e82c5b7a09d3e1f4c682b0d"
+      }
+    }
+  },
+  "model": {
+    "provider": "OpenAI",
+    "model_name": "gpt-x",
+    "model_version": "2026-06-01",
+    "prompt_version": "suit-advisor-v3",
+    "environment": "production-difc",
+    "config_fingerprint": "9f2c41ab7e0d5836",
+    "system_prompt_or_policy_id": "SP-COB34-004",
+    "timestamp": "2026-08-14T09:12:31Z"
+  },
+  "human_review": {
+    "performed": true,
+    "reviewer_id": "ID-4471",
+    "reviewer_role": "senior_suitability_reviewer",
+    "reviewed_at": "2026-08-14T09:12:41Z",
+    "action": "Rejected",
+    "override": false,
+    "override_reason": null,
+    "human_review_protocol_version": "2.1"
+  },
+  "evidence": {
+    "public_inputs": [
+      "0x01", "0x02", "0x03", "0x04", "0x05", "0x06",
+      "0x07", "0x08", "0x09", "0x0a", "0x0b",
+      "0x0000000000000000000000000000000000000000000000000000000000000000"
+    ],
+    "cryptographic_proofs": [
+      {
+        "circuit": "wealth_suitability",
+        "proof_sha256": "3f8a1d92c7e045b6a8103f27d5be914cc0a72e6f8b3d105e94a7c26f8d013b45",
+        "accepted_by_bb_verify": true
+      }
+    ],
+    "verification_key": {
+      "sha256": "8d4da2b382ee714c9f0b2a6d51c837e4a90f6b28d3c714e5027a9fb36c18d0a7"
+    }
+  }
+}

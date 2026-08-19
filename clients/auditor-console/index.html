@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auditor console — verify a decision record</title>
+<!--
+  Offline by construction.
+
+  There is no <script src> to a CDN, no @font-face, no <img src>, no fetch,
+  no XHR, no WebSocket anywhere in this page or in verify.js. An auditor is
+  expected to open this from a USB stick, on a machine inside a bank with no
+  internet, and have it work. If a future edit introduces a network call, it
+  has broken the only property that makes this tool worth using: that it
+  needs nothing from Memtara at the moment of verification.
+
+  The aesthetic is deliberate. This looks like audit software because it is
+  audit software. No hero, no gradient, no animation, no logo. Status is
+  never carried by colour alone — every state prints a glyph and a word, so
+  the page survives being photocopied in black and white and filed.
+-->
+<style>
+:root {
+  --ground:      #ffffff;
+  --panel:       #f4f4f2;
+  --rule:        #c8c8c4;
+  --rule-strong: #8a8a86;
+  --ink:         #17171a;
+  --ink-soft:    #55555c;
+  --ink-faint:   #77777e;
+  --pass:        #1c5c33;
+  --fail:        #8c1c1c;
+  --warn:        #7a5406;
+  --idle:        #55555c;
+  --focus:       #1c4f8c;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:      #131315;
+    --panel:       #1c1c1f;
+    --rule:        #3a3a3f;
+    --rule-strong: #6e6e76;
+    --ink:         #e9e9ec;
+    --ink-soft:    #b0b0b8;
+    --ink-faint:   #8c8c95;
+    --pass:        #6fbf8b;
+    --fail:        #f08a8a;
+    --warn:        #e0b552;
+    --idle:        #b0b0b8;
+    --focus:       #7fb0e8;
+  }
+}
+:root[data-theme="dark"] {
+  --ground:      #131315;
+  --panel:       #1c1c1f;
+  --rule:        #3a3a3f;
+  --rule-strong: #6e6e76;
+  --ink:         #e9e9ec;
+  --ink-soft:    #b0b0b8;
+  --ink-faint:   #8c8c95;
+  --pass:        #6fbf8b;
+  --fail:        #f08a8a;
+  --warn:        #e0b552;
+  --idle:        #b0b0b8;
+  --focus:       #7fb0e8;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+.mono, code, .hash {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+.wrap { max-width: 60rem; margin: 0 auto; padding: 1.5rem 1.25rem 5rem; }
+
+header.doc {
+  border-bottom: 2px solid var(--rule-strong);
+  padding-bottom: .75rem;
+  margin-bottom: 1.25rem;
+}
+header.doc h1 {
+  font-size: 1.05rem; font-weight: 700; margin: 0 0 .2rem;
+  letter-spacing: .02em; text-transform: uppercase;
+}
+header.doc p { margin: 0; color: var(--ink-soft); font-size: .82rem; }
+
+.load {
+  border: 1px dashed var(--rule-strong);
+  background: var(--panel);
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+.load h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; margin: 0 0 .5rem; }
+.load p { margin: 0 0 .75rem; color: var(--ink-soft); font-size: .85rem; max-width: 52ch; }
+.load.dragging { border-color: var(--focus); border-style: solid; }
+.controls { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+button, .filebtn {
+  font: inherit; font-size: .85rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--ground); color: var(--ink);
+  padding: .4rem .8rem; cursor: pointer;
+}
+button:hover, .filebtn:hover { background: var(--panel); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+.verdicts { display: grid; gap: 1rem; margin-bottom: 1.75rem; }
+@media (min-width: 46rem) { .verdicts { grid-template-columns: 1fr 1fr; } }
+.verdict { border: 2px solid var(--rule-strong); padding: 1rem; background: var(--panel); }
+.verdict .eyebrow {
+  font-size: .68rem; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-faint); margin: 0 0 .4rem;
+}
+.verdict .value {
+  font-size: 1.5rem; font-weight: 700; line-height: 1.15; margin: 0 0 .5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.verdict .value .glyph { margin-right: .4rem; }
+.verdict .headline { margin: 0 0 .5rem; font-size: .86rem; }
+.verdict .meaning { margin: 0; font-size: .8rem; color: var(--ink-soft); }
+.v-pass .value { color: var(--pass); }
+.v-fail .value { color: var(--fail); }
+.v-warn .value { color: var(--warn); }
+.v-idle .value { color: var(--idle); }
+
+.separator-note {
+  border-left: 3px solid var(--rule-strong);
+  padding: .5rem 0 .5rem .75rem;
+  margin: 0 0 1.75rem;
+  font-size: .82rem;
+  color: var(--ink-soft);
+  max-width: 62ch;
+}
+
+section.block { margin-bottom: 1.75rem; }
+section.block > h2 {
+  font-size: .78rem; text-transform: uppercase; letter-spacing: .08em;
+  margin: 0 0 .5rem; padding-bottom: .3rem;
+  border-bottom: 1px solid var(--rule-strong);
+}
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .86rem; }
+th, td { text-align: left; vertical-align: top; padding: .4rem .6rem .4rem 0; border-bottom: 1px solid var(--rule); }
+th { font-weight: 600; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint); }
+td.label { width: 13rem; font-weight: 600; }
+td.state { width: 12rem; white-space: nowrap; }
+td.value .hash { word-break: break-all; font-size: .82rem; }
+.note { display: block; margin-top: .25rem; color: var(--ink-soft); font-size: .8rem; max-width: 68ch; }
+.s-pass { color: var(--pass); }
+.s-fail { color: var(--fail); }
+.s-warn { color: var(--warn); }
+.s-idle { color: var(--idle); }
+.glyph { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700; }
+
+.notes-list { padding-left: 1.1rem; margin: 0; }
+.notes-list li { margin-bottom: .35rem; font-size: .85rem; color: var(--ink-soft); }
+.error { border: 2px solid var(--fail); padding: 1rem; color: var(--fail); font-size: .9rem; }
+.hidden { display: none; }
+footer.doc { margin-top: 2.5rem; padding-top: .75rem; border-top: 1px solid var(--rule); font-size: .78rem; color: var(--ink-faint); }
+
+@media print {
+  body { background: #fff; color: #000; }
+  .load, .controls, footer.doc { display: none; }
+  .verdict, .load { border-color: #000; }
+  section.block { break-inside: avoid; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <h1>Auditor console — decision record verification</h1>
+  <p>Runs entirely on this machine. No network request is made, and none is needed. Nothing you load here leaves this page.</p>
+</header>
+
+<div class="load" id="dropzone">
+  <h2>Load a verification bundle</h2>
+  <p>
+    Select every file in the bundle, or drag the folder here. The record itself is
+    <code>decision_evidence.json</code>; the other files are the evidence about it.
+    You do not need an account, a key, or a connection.
+  </p>
+  <div class="controls">
+    <label class="filebtn" for="picker" tabindex="0">Choose files…</label>
+    <input type="file" id="picker" multiple>
+    <button type="button" id="export" class="hidden">Save working paper (.txt)</button>
+    <button type="button" id="print" class="hidden">Print</button>
+    <span id="loadstate" class="mono" style="font-size:.8rem;color:var(--ink-faint)"></span>
+  </div>
+</div>
+
+<div id="error" class="error hidden" role="alert"></div>
+
+<div id="report" class="hidden">
+
+  <section class="block" id="caseline">
+    <h2>Case</h2>
+    <div class="tablewrap"><table><tbody id="casebody"></tbody></table></div>
+  </section>
+
+  <div class="verdicts" id="verdicts"></div>
+
+  <p class="separator-note">
+    These are two separate findings and combining them is an error. A proof can be
+    cryptographically perfect and record a decision <em>not</em> to proceed — that is a
+    correctly evidenced decline, not an approval. Integrity tells you whether the record
+    can be relied on. Outcome tells you what was decided. Neither tells you the decision
+    was right.
+  </p>
+
+  <section class="block">
+    <h2>Cryptographic checks</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Check</th><th>Result</th><th>What it does and does not show</th></tr></thead>
+        <tbody id="checksbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div id="blocks"></div>
+
+  <section class="block" id="outcomesources">
+    <h2>Where the outcome comes from</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Source</th><th>State</th><th>Value</th></tr></thead>
+        <tbody id="sourcesbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block hidden" id="notesection">
+    <h2>Notes on this record</h2>
+    <ul class="notes-list" id="notesbody"></ul>
+  </section>
+
+  <section class="block">
+    <h2>Files examined</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>File</th><th>Role</th><th>Bytes</th></tr></thead>
+        <tbody id="filesbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<footer class="doc">
+  Memtara auditor console. Produced offline; no network call was made in producing this page.
+</footer>
+
+</div>
+
+<script src="verify.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var S = window.AuditorConsole.STATES;   // PASS / FAIL / MISSING / NOT_CHECKED
+  var R = window.AuditorConsole.ROWS;     // RECORDED / ASSERTED_ABSENT / GAP / CONFLICT
+  var lastReport = null;
+
+  // Status is glyph + word, never colour alone: this page gets printed in
+  // black and white and put in a working-paper file.
+  var CHECK_LOOK = {};
+  CHECK_LOOK[S.PASS]        = { glyph: '[+]', word: 'PASS',                       cls: 's-pass' };
+  CHECK_LOOK[S.FAIL]        = { glyph: '[X]', word: 'FAIL',                       cls: 's-fail' };
+  CHECK_LOOK[S.MISSING]     = { glyph: '[!]', word: 'CANNOT CHECK — FILE MISSING', cls: 's-warn' };
+  CHECK_LOOK[S.NOT_CHECKED] = { glyph: '[?]', word: 'NOT CHECKED HERE',            cls: 's-idle' };
+
+  // Two absent-states that must never look alike. `model: null` is a signed
+  // assertion that no AI took part in this decision — a fact, deliberately
+  // recorded. A missing block is a hole in the record. Rendering them the
+  // same way would let a gap read as a clean answer.
+  var ROW_LOOK = {};
+  ROW_LOOK[R.RECORDED]        = { glyph: '[+]', word: 'RECORDED',                 cls: 's-pass' };
+  ROW_LOOK[R.ASSERTED_ABSENT] = { glyph: '[–]', word: 'NOT APPLICABLE (asserted)', cls: 's-idle' };
+  ROW_LOOK[R.GAP]             = { glyph: '[!]', word: 'GAP — UNRECORDED',          cls: 's-warn' };
+  ROW_LOOK[R.CONFLICT]        = { glyph: '[X]', word: 'CONFLICT',                  cls: 's-fail' };
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function statusCell(look) {
+    var td = el('td', 'state ' + look.cls);
+    td.appendChild(el('span', 'glyph', look.glyph));
+    td.appendChild(document.createTextNode(' ' + look.word));
+    return td;
+  }
+  function show(id, on) { document.getElementById(id).classList.toggle('hidden', !on); }
+
+  function verdictCard(eyebrow, value, glyph, cls, headline, meaning) {
+    var d = el('div', 'verdict ' + cls);
+    d.appendChild(el('p', 'eyebrow', eyebrow));
+    var v = el('p', 'value');
+    v.appendChild(el('span', 'glyph', glyph));
+    v.appendChild(document.createTextNode(value));
+    d.appendChild(v);
+    if (headline) d.appendChild(el('p', 'headline', headline));
+    if (meaning) d.appendChild(el('p', 'meaning', meaning));
+    return d;
+  }
+
+  function render(report) {
+    lastReport = report;
+    show('error', false);
+
+    if (!report.loaded) {
+      show('report', false);
+      var e = document.getElementById('error');
+      e.textContent = report.error;
+      show('error', true);
+      show('export', false); show('print', false);
+      return;
+    }
+
+    // ---- case line
+    var cb = document.getElementById('casebody');
+    cb.textContent = '';
+    [['Decision', report.caseId, true],
+     ['Evidence schema version', report.schemaVersion || 'not declared in this record', false],
+     ['Examined at', report.generatedAt, true],
+     ['Files loaded', String(report.files.length), false],
+     ['Unrecorded fields', String(report.gapCount), false]
+    ].forEach(function (r) {
+      var tr = el('tr');
+      tr.appendChild(el('td', 'label', r[0]));
+      var td = el('td', 'value');
+      td.appendChild(el('span', r[2] ? 'hash' : '', r[1]));
+      tr.appendChild(td);
+      cb.appendChild(tr);
+    });
+
+    // ---- the two verdicts, side by side, never merged
+    var vz = document.getElementById('verdicts');
+    vz.textContent = '';
+    var integ = report.integrity;
+    var iLook = integ.verdict === 'VALID' ? { g: '[+]', c: 'v-pass' }
+              : integ.verdict === 'INVALID' ? { g: '[X]', c: 'v-fail' }
+              : { g: '[!]', c: 'v-warn' };
+    vz.appendChild(verdictCard('Finding 1 — evidence integrity', integ.verdict,
+      iLook.g, iLook.c, integ.headline, integ.meaning));
+
+    var out = report.outcome;
+    var oLook = out.conflict ? { g: '[X]', c: 'v-fail' }
+              : out.sense === 'approve' ? { g: '[+]', c: 'v-pass' }
+              : out.sense === 'decline' ? { g: '[–]', c: 'v-idle' }
+              : { g: '[!]', c: 'v-warn' };
+    vz.appendChild(verdictCard('Finding 2 — decision outcome', out.verdict,
+      oLook.g, oLook.c, out.divergence || '', out.note));
+
+    // ---- checks
+    var chb = document.getElementById('checksbody');
+    chb.textContent = '';
+    report.checks.forEach(function (c) {
+      var look = CHECK_LOOK[c.state] || CHECK_LOOK[S.NOT_CHECKED];
+      var tr = el('tr');
+      tr.appendChild(el('td', 'label', c.label));
+      tr.appendChild(statusCell(look));
+      var td = el('td', 'value');
+      if (c.plain) td.appendChild(el('span', '', c.plain));
+      if (c.notMean) td.appendChild(el('span', 'note', 'It does not show: ' + c.notMean));
+      if (c.detail) td.appendChild(el('span', 'note', c.detail));
+      tr.appendChild(td);
+      chb.appendChild(tr);
+    });
+
+    // ---- the six blocks
+    var host = document.getElementById('blocks');
+    host.textContent = '';
+    report.blocks.forEach(function (b) {
+      var sec = el('section', 'block');
+      sec.appendChild(el('h2', null, b.title));
+      var wrapDiv = el('div', 'tablewrap');
+      var t = el('table');
+      var thead = el('thead');
+      var htr = el('tr');
+      ['Field', 'State', 'Value'].forEach(function (h) { htr.appendChild(el('th', null, h)); });
+      thead.appendChild(htr); t.appendChild(thead);
+      var tb = el('tbody');
+      (b.rows || []).forEach(function (r) {
+        var look = ROW_LOOK[r.state] || ROW_LOOK[R.GAP];
+        var tr = el('tr');
+        tr.appendChild(el('td', 'label', r.label));
+        tr.appendChild(statusCell(look));
+        var td = el('td', 'value');
+        if (r.value != null && r.value !== '') {
+          td.appendChild(el('span', r.mono ? 'hash' : '', String(r.value)));
+        }
+        if (r.note) td.appendChild(el('span', 'note', r.note));
+        tr.appendChild(td);
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb); wrapDiv.appendChild(t); sec.appendChild(wrapDiv);
+      host.appendChild(sec);
+    });
+
+    // ---- outcome provenance
+    var sb = document.getElementById('sourcesbody');
+    sb.textContent = '';
+    (out.sources || []).forEach(function (s) {
+      var look = ROW_LOOK[s.state] || ROW_LOOK[R.GAP];
+      var tr = el('tr');
+      var lab = el('td', 'label', s.label);
+      lab.appendChild(el('span', 'note', s.where));
+      tr.appendChild(lab);
+      tr.appendChild(statusCell(look));
+      tr.appendChild(el('td', 'value', s.value == null ? '—' : String(s.value)));
+      sb.appendChild(tr);
+    });
+
+    // ---- notes
+    var nb = document.getElementById('notesbody');
+    nb.textContent = '';
+    (report.notes || []).forEach(function (n) { nb.appendChild(el('li', null, n)); });
+    show('notesection', (report.notes || []).length > 0);
+
+    // ---- files
+    var fb = document.getElementById('filesbody');
+    fb.textContent = '';
+    report.files.forEach(function (f) {
+      var tr = el('tr');
+      var td = el('td', 'label');
+      td.appendChild(el('span', 'hash', f.name));
+      tr.appendChild(td);
+      tr.appendChild(el('td', null, f.role || 'not recognised'));
+      tr.appendChild(el('td', null, String(f.size)));
+      fb.appendChild(tr);
+    });
+
+    show('report', true);
+    show('export', true);
+    show('print', true);
+  }
+
+  function readAll(fileList) {
+    var files = Array.prototype.slice.call(fileList);
+    document.getElementById('loadstate').textContent =
+      files.length + ' file' + (files.length === 1 ? '' : 's') + ' loaded';
+    return Promise.all(files.map(function (f) {
+      return f.arrayBuffer().then(function (buf) {
+        return { path: f.webkitRelativePath || f.name, bytes: new Uint8Array(buf) };
+      });
+    }));
+  }
+
+  function handle(fileList) {
+    readAll(fileList)
+      .then(function (files) { return window.AuditorConsole.analyse(files); })
+      .then(render)
+      .catch(function (err) {
+        render({ loaded: false, error: 'This bundle could not be read: ' + (err && err.message ? err.message : String(err)) });
+      });
+  }
+
+  document.getElementById('picker').addEventListener('change', function (ev) {
+    if (ev.target.files && ev.target.files.length) handle(ev.target.files);
+  });
+
+  // The <label> is keyboard-focusable; Enter/Space must open the picker too.
+  document.querySelector('.filebtn').addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      document.getElementById('picker').click();
+    }
+  });
+
+  var dz = document.getElementById('dropzone');
+  ['dragenter', 'dragover'].forEach(function (t) {
+    dz.addEventListener(t, function (ev) { ev.preventDefault(); dz.classList.add('dragging'); });
+  });
+  ['dragleave', 'drop'].forEach(function (t) {
+    dz.addEventListener(t, function (ev) { ev.preventDefault(); dz.classList.remove('dragging'); });
+  });
+  dz.addEventListener('drop', function (ev) {
+    if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) handle(ev.dataTransfer.files);
+  });
+
+  document.getElementById('print').addEventListener('click', function () { window.print(); });
+
+  document.getElementById('export').addEventListener('click', function () {
+    if (!lastReport) return;
+    var text = window.AuditorConsole.workingPaper(lastReport);
+    var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'working-paper-' + String(lastReport.caseId || 'case').replace(/[^A-Za-z0-9_-]/g, '_') + '.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+})();
+</script>
+</body>
+</html>
