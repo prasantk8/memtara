@@ -82,12 +82,16 @@ for node in tree.body:
                     found[t.id] = ast.literal_eval(node.value)
                 except Exception:
                     pass
-print("%s\t%s" % (found.get("BREAK_IT_ATTACK_NUMBER", "?"),
-                  found.get("BREAK_IT_ATTACK_TITLE", "(untitled)")))
+print("%s\t%s\t%s\t%s" % (found.get("BREAK_IT_ATTACK_NUMBER", "?"),
+                          found.get("BREAK_IT_ATTACK_TITLE", "(untitled)"),
+                          " ".join(str(found.get("BREAK_IT_NOTE", "")).split()),
+                          found.get("BREAK_IT_STATUS_ON_PASS", "STOPPED")))
 PY
 )"
-  number="${title%%$'\t'*}"
-  label="${title#*$'\t'}"
+  number="$(echo "$title" | cut -f1)"
+  label="$(echo "$title" | cut -f2)"
+  module_note="$(echo "$title" | cut -f3)"
+  status_on_pass="$(echo "$title" | cut -f4)"
 
   output="$("$PYTHON" -m pytest "$module" -q -rs -p no:warnings 2>&1)"
   status=$?
@@ -102,8 +106,28 @@ PY
     verdict="COULD NOT RUN"
     reason="$(echo "$output" | grep -iE "cargo build failed|could not compile|not on PATH|could not connect|Connection refused" | head -1 | cut -c1-160)"
   elif echo "$output" | grep -q "^[0-9]* passed"; then
-    verdict="STOPPED"
-    reason=""
+    # A passing test does NOT mean the system stopped the attack. It means the
+    # module's assertions held — and some modules assert, correctly and
+    # deliberately, that an attack SUCCEEDS. Attack #3 is one: it verifies that
+    # the request-time policy snapshot carries no version marker and that a
+    # direct tamper of it is caught by nothing, since the `policy` column is
+    # never folded into any audit event's hashed payload. That test passes, and
+    # the system did not stop the attack.
+    #
+    # So each module declares BREAK_IT_STATUS_ON_PASS and this runner honours
+    # it. It did not, until now: every module carried the constant and the
+    # script ignored it, which meant a verified, documented vulnerability
+    # printed as STOPPED in a table meant for a bank. That is precisely the
+    # false green this whole harness exists to prevent, and it was in the
+    # harness itself.
+    verdict="${status_on_pass:-STOPPED}"
+    # A STOPPED row still carries its module's note. Attack #7 is the reason:
+    # the chain-head checkpoint closes it, but only for records the checkpoint
+    # covers — there is a residual window of up to 65 seconds during which the
+    # newest record is protected by nothing. A bare "STOPPED" in a table shown
+    # to a bank would overstate that guarantee, and the caveat would survive
+    # only in someone's memory. It travels with the row instead.
+    reason="$module_note"
   elif echo "$output" | grep -qE "^SKIPPED|s +\[" || echo "$output" | grep -q "skipped"; then
     verdict="BLOCKED"
     # pytest -rs prints "SKIPPED [1] path:line: <reason>"

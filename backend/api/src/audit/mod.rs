@@ -61,8 +61,17 @@ use crate::error::{ApiError, ApiResult};
 use crate::orgs::OrgAuth;
 use crate::state::AppState;
 
+// Signed checkpoints over the head of this chain. Split into its own file
+// rather than added here because it is a different claim about the same
+// data: `mod.rs` proves rows are linked to each other, `checkpoint.rs`
+// proves the last of them is linked to something outside the database. The
+// header of that file carries the design argument and the exact residual
+// exposure, and should be read before anyone describes this log as making
+// every record tamper-evident.
+pub mod checkpoint;
+
 pub fn router() -> Router<AppState> {
-    Router::new().route("/orgs/:id/audit-log", get(get_org_audit_log))
+    Router::new().route("/orgs/:id/audit-log", get(get_org_audit_log)).merge(checkpoint::router())
 }
 
 /// Fixed, arbitrary key for a Postgres advisory lock that serializes every

@@ -74,6 +74,14 @@ async fn main() -> anyhow::Result<()> {
         )),
     };
 
+    // Start signing the audit chain's head. Before the server accepts
+    // traffic, so no request can be served by an instance that is not
+    // checkpointing — the terminal audit row would otherwise be unprotected
+    // for the whole life of the process rather than for one interval. See
+    // audit/checkpoint.rs for what the interval means and what it does not
+    // cover.
+    audit::checkpoint::spawn(state.clone());
+
     let app = Router::new()
         .route("/healthz", get(healthz))
         .merge(auth::router())

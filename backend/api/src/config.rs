@@ -66,6 +66,16 @@ pub struct Config {
     /// does and does not defend.
     pub proof_rate_limit: u32,
     pub proof_rate_limit_window: Duration,
+    // NOTE: the audit checkpointer's interval and event bound
+    // (MEMTARA_AUDIT_CHECKPOINT_INTERVAL_SECONDS /
+    // MEMTARA_AUDIT_CHECKPOINT_MAX_EVENTS) deliberately do NOT live here,
+    // despite this struct's "one place for env" rule. They live in
+    // `audit::checkpoint::CheckpointPolicy::from_env`, read once at boot in
+    // the same style. The reason is mechanical rather than aesthetic: this
+    // struct is constructed by exhaustive literal in other modules' tests,
+    // so every field added here is a compile break in a file its owner did
+    // not touch. A setting used by exactly one module does not justify that.
+    // See the header of audit/checkpoint.rs.
 }
 
 impl Config {

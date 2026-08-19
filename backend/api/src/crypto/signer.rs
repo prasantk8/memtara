@@ -188,11 +188,33 @@ impl IssuerKey {
 
     /// Sign `claims` into a compact-serialization JWS (a JWT).
     pub fn issue(&self, claims: &ProofTokenClaims) -> anyhow::Result<String> {
-        let header = JwsHeader { alg: ALG, typ: "JWT", kid: &self.kid };
+        self.sign_compact_jws("JWT", &serde_json::to_vec(claims)?)
+    }
+
+    /// Sign an already-serialized JSON payload into a compact JWS with a
+    /// caller-chosen `typ`.
+    ///
+    /// Added for `audit::checkpoint`, which signs a statement about the audit
+    /// chain's head rather than an attestation about a proof, and so cannot
+    /// use `ProofTokenClaims`. Introducing a second signing key for it was
+    /// considered and rejected — see the header of `audit/checkpoint.rs` for
+    /// that argument. What matters here is that there is still exactly ONE
+    /// place in the codebase where bytes meet the private key, so the
+    /// "EdDSA only, no `alg` negotiation" property in the module comment
+    /// above continues to hold for every signature this deployment emits.
+    ///
+    /// `typ` is not decorative and must not be reused across payload shapes:
+    /// it is the RFC 8725 §3.11 defence against cross-type confusion, i.e.
+    /// against a relying party being handed a checkpoint where it expected a
+    /// proof token. The payload is taken pre-serialized rather than as a
+    /// `T: Serialize` so the exact bytes that get signed are the caller's,
+    /// chosen once, and are not silently re-derived anywhere.
+    pub fn sign_compact_jws(&self, typ: &str, payload_json: &[u8]) -> anyhow::Result<String> {
+        let header = JwsHeader { alg: ALG, typ, kid: &self.kid };
         let signing_input = format!(
             "{}.{}",
             URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header)?),
-            URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims)?),
+            URL_SAFE_NO_PAD.encode(payload_json),
         );
         let signature = self.signing.sign(signing_input.as_bytes());
         Ok(format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature.to_bytes())))
