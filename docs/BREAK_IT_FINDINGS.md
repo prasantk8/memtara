@@ -12,16 +12,11 @@ itself is worth less than one that shows where it was wrong.
 
 ## Result
 
-    6 stopped   4 not stopped   1 blocked
+    7 stopped   3 not stopped   1 blocked
 
-Three of the four NOT STOPPED rows are attacks 4, 10 and 11: their capture
-paths landed with migration `0006_decision_capture`, their tripwires fired
-exactly as designed, and the real attacks are owed. They are not defects —
-they are placeholders that have correctly stopped being able to pass.
-
-The fourth, attack 3, is a genuine unguarded surface and is Finding 5 below.
-It was reported as STOPPED until this revision, wrongly. See that finding for
-why, because the cause was in the harness rather than the product.
+All three NOT STOPPED rows are real, reproduced findings against the running
+system, not placeholders. Attack 4 is the most serious result of the whole
+exercise and is Finding 6.
 
 A BLOCKED row is not a pass. It means the capability under attack does not
 exist, so the attack cannot be run. The harness cannot render one as a pass.
@@ -31,14 +26,14 @@ exist, so the attack cannot be run. The harness cannot render one as a pass.
 | 1 | Change the customer's data after the fact | STOPPED |
 | 2 | Change a threshold mid-flight | STOPPED |
 | 3 | Change the policy version mid-flight | **NOT STOPPED** — see Finding 5 |
-| 4 | Change the model identity | NOT STOPPED — tripwire, real attack owed |
+| 4 | Change the model identity | **NOT STOPPED** — see Finding 6 |
 | 5 | Change or substitute the verification key | STOPPED |
 | 6 | Remove the proof service | STOPPED |
 | 7 | Modify the evidence record | **STOPPED — with a stated residual window** |
 | 8 | Revoke consent | BLOCKED — no consent concept |
 | 9 | Attempt an unauthorised data category | STOPPED |
-| 10 | Bypass human review | NOT STOPPED — tripwire, real attack owed |
-| 11 | Swap the model without recording it | NOT STOPPED — tripwire, real attack owed |
+| 10 | Bypass human review | STOPPED — handler *and* database |
+| 11 | Swap the model without recording it | **NOT STOPPED** — see Finding 7 |
 
 ---
 
@@ -151,11 +146,13 @@ the org endpoint for exactly this reason.
 
 The bundle's verifier reports this honestly rather than papering over it.
 
-## Finding 3 — four attacks were blocked; three are now owed as real tests
+## Finding 3 — four attacks were blocked; three are now real tests
 
 Attacks 4, 10 and 11 waited on the same two capture paths — model identity
-and per-decision human review. Those landed, the tripwires fired, and the
-placeholders can no longer pass. That is the mechanism working.
+and per-decision human review. Those landed, the tripwires fired, the
+placeholders stopped being able to pass, and all three have since been
+implemented as real attacks. Two of them found something (Findings 6 and 7);
+the third, human review, holds at both layers.
 
 The tripwires themselves needed correcting once. They originally keyed on the
 *type* existing, so when `DecisionEvidence` v1 introduced `model.*` and
@@ -222,3 +219,105 @@ verdict.
 give it a `policy_id` and `policy_version` so a named-version mismatch becomes
 expressible at all. Both are already required by `DecisionEvidence`, where they
 remain among the ten honestly-unpopulated fields.
+
+## Finding 6 — the eight model fields are committed to nothing
+
+**Severity: this is the most serious result of the exercise.** It sits directly
+under the product's central claim.
+
+The intake contract in `wealth/model_intake.rs` is genuinely careful, and the
+attack proves it rather than assuming it: a second attestation is refused by
+the primary key; the review endpoint is `deny_unknown_fields` and rejects a
+smuggled `model_name` outright; there is no PATCH, no PUT and no per-decision
+model route — 405, 405, 404. Re-opening produces a different decision and
+leaves the original untouched. The whole HTTP surface holds.
+
+The values it validates so carefully are then stored where **nothing commits
+to them**. `audit_log` has no payload column at all, and the one event that
+mentions AI participation hashes the *declaration* — that a model was named —
+never the provider, model name, version or config fingerprint. So a single
+`update decision_model_attestations set …` rewrites the identity the sealed
+record serves, and the organisation's hash chain is **byte-identical before
+and after**. This is not a chain that failed to notice. There was nothing for
+it to notice.
+
+**The escalation is the part to show a buyer.** The same single UPDATE can set
+`declaration = 'no_ai_participated'`. The record then serves `model: null` —
+which both `schema/decision_evidence/v1.1.0.json` and `model_intake.rs` define
+as a *signed assertion that no AI system participated* — for a decision opened
+with a fully identified model. Every defence in the intake contract exists to
+stop that assertion being reached by accident through the API. None of it
+applies to a database write, and the surrounding record stays undisturbed.
+
+**Fix:** put a digest of the attestation inside the
+`wealth_suitability_requested` hashed payload, or seal the record at decision
+time. Either makes the swap detectable. Choosing between them is a design
+decision and not a test's to make. Until one lands, the honest description of
+what we evidence about the model is: *that a declaration was made*, not *which
+model ran*.
+
+## Finding 7 — the model attestation is a forward declaration nothing can rebind
+
+Distinct from Finding 6, and not fixed by fixing it: a control that detected
+Finding 6 perfectly would not touch this one. Here no recorded value changes
+at all. Every field stays exactly as written, internally consistent, and
+wrong.
+
+`decision_model_attestations` is written once, in the same transaction as the
+assessment, by `POST /issue-wealth-request` — before the device has proved
+anything, before the verdict exists, before any human has reviewed it. It is
+therefore a declaration about a decision that has not happened yet, and the
+record presents it with `state: "recorded"`, the same provenance a fact
+observed at decision time would carry. Asserted from the rows rather than from
+the source: `decision_model_attestations.created_at < wealth_requests.assessed_at`.
+
+Nothing reconfirms it, and nothing can. `request_id` is that table's primary
+key, there is no PATCH or PUT, and the review endpoint rejects model fields.
+**The rule that makes Finding 6's API surface safe is the same rule that makes
+the honest correction impossible**: an organisation that discovers mid-flight
+that a different model served the request has no route, row or field in which
+to say so, and the system keeps serving the first declaration.
+
+`model.timestamp` is unvalidated and would be the one field capable of
+exposing a stale attestation. A model call timestamped **2023** was accepted
+for an assessment opened in 2026.
+
+The contrast that makes this a design gap rather than an oversight: this
+system already does the right thing one field over. `products.terms_version`
+is bumped by a database trigger when thresholds change, snapshotted onto each
+assessment at open, and surfaced as `policy.thresholds.threshold_version`, so
+an examiner can see that a later decision ran under version 2 while this one
+is pinned to version 1. The model block has no version, no snapshot
+discipline, and no rebind.
+
+## Finding 8 — human review holds at both layers, and the residual is a consistent lie
+
+Attack 10 is the one clean result among the three. Seven forgeries were
+attempted through the real endpoint and refused, leaving no row; the same
+seven were then written straight into the table with the API removed from the
+path, and each was refused by Postgres by name —
+`decision_reviews_override_requires_reason`,
+`decision_reviews_duration_needs_a_source`,
+`decision_reviews_review_duration_source_check`,
+`decision_reviews_action_check`, and `decision_reviews_pkey` for the second
+review. A control that lives only in a request handler is bypassed by anyone
+with a connection string; this one does not.
+
+An unreviewed decision also cannot be made to read like a reviewed one: every
+reviewer field is `not_applicable` — a signed assertion that there was no
+review step — rather than `unpopulated`, which would be an admission that a
+reviewer's name was lost. And an accepted override keeps the verdict it
+overrode: `final_decision.outcome` stays with what the circuit proved while
+`status` carries what the human did. An override that rewrote the
+cryptographic verdict would erase the thing it was overriding.
+
+**The residual, stated because it is real:** CHECK constraints stop an
+internally *inconsistent* forged review. They cannot stop a consistent *lie* —
+a fabricated row naming a real reviewer with a plausible duration and a real
+source is accepted, because no constraint can know whether a human was at the
+desk. It buys nothing on an undecided assessment, where the evidence endpoint
+still refuses to produce a record. What it can do is attach a fabricated
+reviewer to a genuine decision. The only thing distinguishing it from a real
+review is the missing `decision_human_reviewed` entry in the hash chain — a
+contradiction the `DecisionEvidence` record does not carry and nothing
+cross-checks. The raw material for that check exists; the check does not.
