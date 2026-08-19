@@ -46,6 +46,8 @@
 // remember this (see `issuance::Issuer`).
 
 mod evidence;
+mod model_intake;
+mod review;
 
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -87,7 +89,35 @@ pub fn router() -> Router<AppState> {
             "/api/v1/wealth-assessments/:request_id",
             axum::routing::get(evidence::get_wealth_assessment),
         )
+        // The DecisionEvidence v1.1.0 record for one assessment: the object
+        // an offline auditor validates against
+        // `schema/decision_evidence/v1.1.0.json`. Separate from the route
+        // above rather than replacing it — that one is the operational view
+        // a bank's own tooling already consumes, this one is the sealed
+        // shape, and collapsing them would make every change to either a
+        // breaking change to both.
+        .route(
+            "/api/v1/wealth-assessments/:request_id/decision-evidence",
+            axum::routing::get(evidence::get_decision_evidence),
+        )
+        // Per-decision human review. The control the "bypass human review"
+        // attack had nothing to bypass until now.
+        .route(
+            "/api/v1/wealth-assessments/:request_id/review",
+            post(review::submit_review),
+        )
 }
+
+/// The firm's own process taxonomy entry for what this module does.
+///
+/// Not `CircuitType::WealthSuitability.as_str()`, which names a *proof type*.
+/// Conflating the two would put a cryptographic artefact where a regulator
+/// expects a bank's process taxonomy — "wealth_suitability" answers "how was
+/// it proved", and `business_process` answers "what was being decided".
+/// Still a constant rather than a lookup table: the module that implements a
+/// process is the one entitled to name it, and a config table with one row
+/// in it would be indirection pretending to be flexibility.
+pub(crate) const BUSINESS_PROCESS: &str = "wealth.suitability_recommendation";
 
 // ---------------------------------------------------------------------
 // ISIN handling
@@ -163,6 +193,42 @@ pub struct IssueWealthRequestBody {
     pub ttl_seconds: Option<i64>,
 
     // ---------------------------------------------------------------
+    // MODEL identity intake. See `model_intake` for the contract and for
+    // why omission maps to "an AI participated and we cannot say which"
+    // rather than to the assertion that none did.
+    //
+    // `Option`, not required, and that is a considered choice rather than
+    // laxity. Making it mandatory would 400 every existing integration,
+    // and an endpoint that returns 400 is an endpoint a bank routes
+    // around — the pressure would land on getting the field *present*,
+    // which is exactly the pressure that produces a stock declaration
+    // pasted into every call. Optional-but-never-flattering keeps the
+    // cost of silence on the record instead of on the integration: a
+    // caller that says nothing gets a record that says nothing was
+    // established, which is true, and which is visible in the export.
+    // ---------------------------------------------------------------
+    /// Untyped here on purpose — see `model_intake::resolve_value`. Typing
+    /// it as the enum would hand a malformed declaration to axum's `Json`
+    /// rejection, which answers 422 "Failed to deserialize the JSON body"
+    /// and names nothing. The refusal would still be safe; it would just be
+    /// useless to the integrator who most needs it.
+    #[serde(default)]
+    pub ai_participation: Option<serde_json::Value>,
+
+    /// SHA-256 over the context the deciding system saw, computed by the
+    /// caller. A sibling of the model block rather than a child of it: when
+    /// no AI participated the decision still had inputs, and a fingerprint
+    /// that disappeared along with the model would leave a non-AI decision
+    /// with nothing committing to what it was decided on.
+    #[serde(default)]
+    pub input_context_fingerprint: Option<String>,
+    /// SHA-256 over the deciding system's structured output. Distinct from
+    /// `proof_sha256`, which digests the *proof*: a proof digest commits to
+    /// the artefact that was verified, not to what the model said.
+    #[serde(default)]
+    pub output_fingerprint: Option<String>,
+
+    // ---------------------------------------------------------------
     // Accepted by the parser, refused by the handler.
     //
     // These four used to be the request's terms. They now live in the
@@ -220,6 +286,23 @@ pub struct IssueWealthRequestResponse {
     /// has no other way to learn, and getting it wrong produces a proof that
     /// fails verification with no clue as to why.
     pub public_input_template: Vec<serde_json::Value>,
+
+    /// Which of the three AI-participation declarations was written into
+    /// this decision's evidence.
+    ///
+    /// Echoed because the difference between them is invisible at
+    /// integration time and expensive at export time. An integrator who
+    /// meant to declare a model and mistyped a field would otherwise
+    /// discover it in a compliance export months later, by which point the
+    /// records are sealed and cannot be corrected. This costs one string and
+    /// makes the mistake visible on the first call.
+    pub ai_participation_recorded: model_intake::RecordedDeclaration,
+
+    /// The monotonic version of the threshold set this assessment was fixed
+    /// against (`products.terms_version`, snapshotted). Returned so a caller
+    /// can name the exact version its recommendation was measured under
+    /// without re-reading the registry, which may have moved on by then.
+    pub threshold_version: i32,
 }
 
 async fn issue_wealth_request(
@@ -248,6 +331,22 @@ async fn issue_wealth_request(
             supplied.join(", "),
         )));
     }
+
+    // Resolved before any write, so a malformed declaration costs the caller
+    // a 400 and costs the database nothing. `None` is not an error here — it
+    // resolves to `participated_but_unidentified`, which is the honest
+    // reading of silence and the only reading that cannot flatter.
+    let attestation = model_intake::resolve_value(body.ai_participation.clone())?;
+    let input_context_fingerprint = body
+        .input_context_fingerprint
+        .as_deref()
+        .map(|v| model_intake::parse_digest("input_context_fingerprint", v))
+        .transpose()?;
+    let output_fingerprint = body
+        .output_fingerprint
+        .as_deref()
+        .map(|v| model_intake::parse_digest("output_fingerprint", v))
+        .transpose()?;
 
     let isin = crate::products::normalise_isin(&body.product_isin)?;
 
@@ -285,6 +384,17 @@ async fn issue_wealth_request(
     if !user_exists {
         return Err(ApiError::NotFoundDetail(format!("no user {}", body.user_id)));
     }
+
+    // Read separately rather than added to `products::ProductRow`, which
+    // belongs to the registry module. The column is new (migrations/0007)
+    // and the trigger that maintains it is the authority on its value; this
+    // is the read that snapshots it onto the assessment.
+    let terms_version: i32 = sqlx::query_scalar!(
+        r#"select terms_version as "terms_version!" from products where id = $1"#,
+        product.id,
+    )
+    .fetch_one(&state.db)
+    .await?;
 
     let window_start = Utc::now();
     let window_end = window_start + Duration::seconds(ttl);
@@ -337,9 +447,9 @@ async fn issue_wealth_request(
         insert into wealth_requests (
             request_id, product_id, product_isin, product_name, product_ref,
             min_income, min_liquidity, max_concentration_percent, product_risk_level,
-            window_start, window_end
+            window_start, window_end, terms_version
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         "#,
         request_id,
         product.id,
@@ -352,6 +462,40 @@ async fn issue_wealth_request(
         product.risk_level,
         window_start,
         window_end,
+        terms_version,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    // The model attestation, in the same transaction as the request it is
+    // about. A decision that exists without a declaration of whether an AI
+    // took part is the exact gap the board named, and it must not be
+    // reachable by a partial failure: either both rows land or neither does.
+    sqlx::query!(
+        r#"
+        insert into decision_model_attestations (
+            request_id, org_id, declaration, no_ai_attestation, unidentified_reason,
+            model_provider, model_name, model_version, prompt_version, model_environment,
+            model_config_fingerprint, model_system_prompt_or_policy_id, model_timestamp,
+            input_context_fingerprint, output_fingerprint
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        "#,
+        request_id,
+        org_id,
+        attestation.declaration,
+        attestation.no_ai_attestation,
+        attestation.unidentified_reason,
+        attestation.provider,
+        attestation.model_name,
+        attestation.model_version,
+        attestation.prompt_version,
+        attestation.environment,
+        attestation.config_fingerprint,
+        attestation.system_prompt_or_policy_id,
+        attestation.model_timestamp,
+        input_context_fingerprint,
+        output_fingerprint,
     )
     .execute(&mut *tx)
     .await?;
@@ -377,6 +521,15 @@ async fn issue_wealth_request(
             // by whoever opened the assessment.
             "terms_source": "product_registry",
             "product_registry_updated_at": product.updated_at,
+            // Which version of the threshold set this assessment is fixed
+            // against. Previously answerable only by replaying every
+            // `product_terms_amended` event and counting.
+            "threshold_version": terms_version,
+            // In the hashed payload, not only in the row: the chain is the
+            // evidence and the table is the index (see 0005's note). A firm
+            // that later disputes which declaration it made can be shown the
+            // event, not just the row someone could have updated.
+            "ai_participation_declared": attestation.declaration,
             "dfsa_rules": ["COB 3.1"],
         }),
     )
@@ -410,6 +563,8 @@ async fn issue_wealth_request(
                 product.risk_level,
                 &nonce,
             ),
+            ai_participation_recorded: attestation.recorded_declaration(),
+            threshold_version: terms_version,
         }),
     ))
 }
@@ -686,10 +841,28 @@ async fn submit_wealth_proof(
         .issue(&claims)
         .map_err(|e| ApiError::Other(anyhow::anyhow!("failed to sign suitability token: {e}")))?;
 
+    // `vault_root` is written here and not at open time, and is snapshotted
+    // rather than joined.
+    //
+    // By this line the value has been checked twice: bound into the circuit
+    // as public input 2, and compared byte-for-byte against the holder's
+    // registered `vault_blobs.vault_root` a hundred lines above. It is the
+    // nearest thing to a provenance proof this system has, and until now it
+    // was discarded the moment that comparison passed —
+    // `data.customer.data_provenance.vault_root` sat unpopulated in the
+    // evidence record while the value itself flowed through this handler.
+    //
+    // Not a join, because `vault_blobs.vault_root` moves every time the
+    // holder syncs. An evidence record that resolved it live would quote
+    // today's root as the one this assessment was computed against, which is
+    // a false statement in signed bytes and worse than the empty field it
+    // replaces.
     sqlx::query!(
-        "update wealth_requests set suitable = $2, assessed_at = now() where request_id = $1",
+        "update wealth_requests set suitable = $2, assessed_at = now(), vault_root = $3 \
+         where request_id = $1",
         body.request_id,
         suitable,
+        &parsed[2][..],
     )
     .execute(&state.db)
     .await?;

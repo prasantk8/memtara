@@ -1,0 +1,798 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.memtara.com/decision_evidence/v1.1.0.json",
+  "title": "DecisionEvidence v1.1.0",
+  "$comment": "PINNED AND IMMUTABLE, exactly as v1.0.0.json is. This file is the authority an offline auditor validates a sealed DecisionEvidence record against, and it stops being editable the moment the first record is sealed under evidence_schema_version 1.1.0. CHANGES GO IN A NEW FILE: bump the semver, add schema/decision_evidence/vX.Y.Z.json, leave this one and every earlier one alone. WHAT CHANGED FROM 1.0.0, AND WHY IT COULD NOT BE AN EDIT: human_review gained two keys, review_duration_ms and review_duration_source. Every block here sets additionalProperties false, so a record carrying them is not a valid 1.0.0 record and must not claim to be one - which is precisely why v1.0.0.json was not edited in place. Records already sealed under 1.0.0 remain valid against their own file, which stays on disk beside this one; that is the whole point of versioning the schema rather than revising it. WHY THE ADDITION: in the Cigna litigation the finding that ended the argument was a duration - roughly 1.2 seconds per claim, in batches, without the file being opened. Every one of those denials had a named reviewer, a timestamp and an action, which is the entire v1.0.0 human_review block: by that record they were reviews. The duration is what made them not reviews. A firm's own compliance function must be able to run that query against itself from month one, and it cannot run it against fields that do not exist. WHY MINOR AND NOT MAJOR: the change is purely additive. Every 1.0.0 key survives with its meaning intact, nothing was removed, renamed or re-constrained, so a reader written for 1.0.0 that tolerates unknown keys reads a 1.1.0 record correctly. The $id above is an identifier, not a fetch target: an offline auditor validates against their copy of this file as shipped in the verification bundle, and no step of verification may require a network call.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "evidence_schema_version",
+    "decision",
+    "policy",
+    "data",
+    "model",
+    "human_review",
+    "evidence"
+  ],
+  "properties": {
+    "evidence_schema_version": {
+      "$comment": "Inside the object, therefore inside the bytes the seal digests. Not sidecar metadata: an examiner opening this record in 2028 must be able to name the schema it was written under without asking a live registry, and must be able to detect an edit to that claim via the seal. The value is also how they find this file: schema/decision_evidence/v1.1.0.json in the repository at the matching tag, or the copy shipped in the verification bundle.",
+      "const": "1.1.0"
+    },
+    "decision": {
+      "$ref": "#/$defs/decisionBlock"
+    },
+    "policy": {
+      "$ref": "#/$defs/policyBlock"
+    },
+    "data": {
+      "$ref": "#/$defs/dataBlock"
+    },
+    "model": {
+      "$comment": "null here is a signed assertion that no AI system participated in this decision. It is NOT 'we did not record the model'. That second case is expressed as a present object whose leaves are state:unpopulated. The key is mandatory in both cases - a record that omits it is invalid, not permissive.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/modelIdentity"
+        }
+      ]
+    },
+    "human_review": {
+      "$ref": "#/$defs/humanReviewBlock"
+    },
+    "evidence": {
+      "$ref": "#/$defs/evidenceBlock"
+    }
+  },
+  "$defs": {
+    "provenancedBase": {
+      "$comment": "A leaf value plus the provenance of its presence or absence. Always exactly three keys, in every state, so that a record's key set never depends on how much the producing deployment happened to know. state is not derivable from value: 'unpopulated' and 'not_applicable' both carry a null value, and the difference between an admission of ignorance and a signed assertion of non-applicability is the entire point.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "value",
+        "unpopulated_reason"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "recorded",
+            "not_applicable",
+            "unpopulated"
+          ]
+        },
+        "value": true,
+        "unpopulated_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "recorded"
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "unpopulated_reason": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "unpopulated",
+                  "not_applicable"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "type": "null"
+              },
+              "unpopulated_reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "provenancedString": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/provenancedBase"
+        },
+        {
+          "properties": {
+            "value": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "provenancedInteger": {
+      "$comment": "A provenanced leaf whose value is an integer. Integer and not number: the canonical form this record is digested under refuses floating point outright, because Python's json.dumps and Rust's ryu disagree on exponent formatting and a float would produce a digest only one of a sealed pack's two verifiers could reproduce. See backend/api/src/evidence/canonical.rs.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/provenancedBase"
+        },
+        {
+          "properties": {
+            "value": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "provenancedStringArray": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/provenancedBase"
+        },
+        {
+          "properties": {
+            "value": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "provenancedTimestamp": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/provenancedBase"
+        },
+        {
+          "properties": {
+            "value": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "provenancedDecisionBasis": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/provenancedBase"
+        },
+        {
+          "properties": {
+            "value": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "enum": [
+                    "proof_only",
+                    "proof_and_human_approved",
+                    "proof_and_human_override",
+                    "human_only_proof_unavailable"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "decisionAction": {
+      "$comment": "Required wherever it appears. Three variants and no fourth: there is no 'pending', because an evidence record is written about a decision that was reached. A rejection carries this field exactly as an approval does - that symmetry is what keeps the canonical bytes, and therefore the seal, comparable across outcomes.",
+      "enum": [
+        "approved",
+        "rejected",
+        "modified"
+      ]
+    },
+    "decisionOutcome": {
+      "$comment": "'negative' means a verdict was produced and it was negative. 'no_verdict' means no verdict was produced at all - the control could not run. Collapsing the two would let an outage read as a decline. This distinction already exists in backend/api/src/wealth/evidence.rs:180-187 and is promoted here into the schema so that it cannot be lost in a later refactor.",
+      "enum": [
+        "affirmative",
+        "negative",
+        "no_verdict"
+      ]
+    },
+    "sha256Hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "decisionBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision_id",
+        "institution",
+        "business_process",
+        "status",
+        "final_decision",
+        "input_context_fingerprint",
+        "output_fingerprint",
+        "timestamps"
+      ],
+      "properties": {
+        "decision_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "institution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "org_id",
+            "org_name",
+            "org_type"
+          ],
+          "properties": {
+            "org_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "org_name": {
+              "type": "string"
+            },
+            "org_type": {
+              "$comment": "Deliberately an open string, not an enum. An evidence reader must not fail closed on an org type added after this schema was pinned; an unrecognised institution type is a thing to report, not a reason to refuse to parse a sealed record.",
+              "type": "string"
+            }
+          }
+        },
+        "business_process": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "status": {
+          "$comment": "The decision's own disposition. NOT disclosure_requests.status, which is pipeline state (pending/fulfilled/expired).",
+          "$ref": "#/$defs/decisionAction"
+        },
+        "final_decision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "outcome",
+            "decided_at",
+            "decision_basis"
+          ],
+          "properties": {
+            "outcome": {
+              "$ref": "#/$defs/decisionOutcome"
+            },
+            "decided_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "decision_basis": {
+              "$ref": "#/$defs/provenancedDecisionBasis"
+            }
+          }
+        },
+        "input_context_fingerprint": {
+          "$comment": "Sibling of model rather than a child of it. When model is null the decision still had inputs; a fingerprint that vanished along with the AI would leave a non-AI decision with nothing committing to what it was decided on.",
+          "$ref": "#/$defs/provenancedString"
+        },
+        "output_fingerprint": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "timestamps": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "opened_at",
+            "assessed_at",
+            "exported_at"
+          ],
+          "properties": {
+            "opened_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "assessed_at": {
+              "$comment": "Nullable because a decision can be opened and never assessed - NOT because it was rejected. A rejection has an assessed_at exactly as an approval does. The key is present either way.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "exported_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      }
+    },
+    "policyBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy_id",
+        "policy_version",
+        "source",
+        "decision_logic_version",
+        "thresholds",
+        "regulatory_control_mapping"
+      ],
+      "properties": {
+        "policy_id": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "policy_version": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "source": {
+          "type": "string"
+        },
+        "decision_logic_version": {
+          "$comment": "Which revision of the rules turned inputs into a verdict. Distinct from policy_version: the policy text can be unchanged while the code and circuit enforcing it are rebuilt.",
+          "$ref": "#/$defs/provenancedString"
+        },
+        "thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "threshold_set_id",
+            "threshold_version",
+            "values",
+            "source"
+          ],
+          "properties": {
+            "threshold_set_id": {
+              "$ref": "#/$defs/provenancedString"
+            },
+            "threshold_version": {
+              "$ref": "#/$defs/provenancedString"
+            },
+            "values": {
+              "$comment": "Integers, strings, booleans and null only. Floats are excluded on purpose: CPython's json.dumps renders 1e300 as 1e+300 and Rust's ryu renders it as 1e300, so a float in the canonical bytes produces a digest that only one of the two verifiers of a sealed pack can reproduce. Encode money in minor units.",
+              "type": "object",
+              "additionalProperties": {
+                "type": [
+                  "integer",
+                  "string",
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "source": {
+              "type": "string"
+            }
+          }
+        },
+        "regulatory_control_mapping": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "framework",
+              "clause"
+            ],
+            "properties": {
+              "framework": {
+                "type": "string"
+              },
+              "clause": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "dataBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "customer",
+        "consent",
+        "data_schema_version"
+      ],
+      "properties": {
+        "customer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subject_id",
+            "data_provenance",
+            "data_provenance_version"
+          ],
+          "properties": {
+            "subject_id": {
+              "type": "string"
+            },
+            "data_provenance": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "disclosed_attributes",
+                "vault_root",
+                "statement"
+              ],
+              "properties": {
+                "disclosed_attributes": {
+                  "$comment": "Empty for the wealth flow, and empty by design rather than by omission: the server never held the client's income, liquidity, risk tolerance or holdings. An examiner will look for those figures, so the record says structurally why they are not there.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "vault_root": {
+                  "$ref": "#/$defs/provenancedString"
+                },
+                "statement": {
+                  "type": "string"
+                }
+              }
+            },
+            "data_provenance_version": {
+              "$ref": "#/$defs/provenancedString"
+            }
+          }
+        },
+        "consent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "consent_id",
+            "consent_version",
+            "scope",
+            "granted_at",
+            "purpose_hash"
+          ],
+          "properties": {
+            "consent_id": {
+              "$ref": "#/$defs/provenancedString"
+            },
+            "consent_version": {
+              "$comment": "The consent POLICY version this grant was made under.",
+              "$ref": "#/$defs/provenancedString"
+            },
+            "scope": {
+              "$ref": "#/$defs/provenancedStringArray"
+            },
+            "granted_at": {
+              "$ref": "#/$defs/provenancedTimestamp"
+            },
+            "purpose_hash": {
+              "$comment": "vault/src/session.rs SessionPolicy.purpose_hash - the only consent-adjacent value that exists in the system today. It is a purpose binding, not a consent record: no grant time, no subject acknowledgement, no revocation path. Kept as its own field so that populating it can never be mistaken for having obtained consent.",
+              "$ref": "#/$defs/provenancedString"
+            }
+          }
+        },
+        "data_schema_version": {
+          "$ref": "#/$defs/provenancedString"
+        }
+      }
+    },
+    "modelIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model_name",
+        "model_version",
+        "prompt_version",
+        "environment",
+        "config_fingerprint",
+        "system_prompt_or_policy_id",
+        "timestamp"
+      ],
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "model_name": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "model_version": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "prompt_version": {
+          "$comment": "Which revision of the prompt. Separate from system_prompt_or_policy_id, which says which prompt.",
+          "$ref": "#/$defs/provenancedString"
+        },
+        "environment": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "config_fingerprint": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "system_prompt_or_policy_id": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "timestamp": {
+          "$comment": "When the model was called. Distinct from decision.timestamps.assessed_at, which times the proof workflow.",
+          "$ref": "#/$defs/provenancedTimestamp"
+        }
+      }
+    },
+    "humanReviewBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "performed",
+        "reviewer_id",
+        "reviewer_role",
+        "action",
+        "override",
+        "override_reason",
+        "reviewed_at",
+        "human_review_protocol_version",
+        "review_duration_ms",
+        "review_duration_source"
+      ],
+      "properties": {
+        "performed": {
+          "$comment": "Whether a human review step occurred at all - the human analogue of model:null. Without it, a decision with no review step would have to carry an action that reads as a human verdict, which would be a false statement inside the signed bytes.",
+          "type": "boolean"
+        },
+        "reviewer_id": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "reviewer_role": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "action": {
+          "$ref": "#/$defs/decisionAction"
+        },
+        "override": {
+          "type": "boolean"
+        },
+        "override_reason": {
+          "$comment": "Genuinely nullable by meaning: there is no reason when there was no override. Null, never absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reviewed_at": {
+          "$ref": "#/$defs/provenancedTimestamp"
+        },
+        "human_review_protocol_version": {
+          "$ref": "#/$defs/provenancedString"
+        },
+        "review_duration_ms": {
+          "$comment": "How long the reviewer spent on this decision, in milliseconds. The field the Cigna case turned on: a review with a named reviewer, a timestamp and an action is indistinguishable from a rubber stamp without it. Non-negative. Null-with-a-reason when the reviewing client did not report one, and not_applicable when human_review.performed is false - a decision nobody reviewed has no review duration, which is an assertion of absence rather than a gap.",
+          "$ref": "#/$defs/provenancedInteger"
+        },
+        "review_duration_source": {
+          "$comment": "How review_duration_ms was arrived at, and more load-bearing than the number itself. 'reviewer_client_asserted' means the reviewing client timed itself and told us - trust it exactly as far as you trust that client, and note that it is the number a firm gaming this metric would inflate. 'server_computed_from_declared_start' means the caller supplied when the reviewer opened the case and the server subtracted it from its own receipt time: the start is still theirs, the end is ours. Neither is an independent measurement and the schema does not let either pretend to be. A duration whose provenance is unstated is admissible as neither, which is why the two fields travel together.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/provenancedString"
+            },
+            {
+              "properties": {
+                "value": {
+                  "enum": [
+                    "reviewer_client_asserted",
+                    "server_computed_from_declared_start",
+                    null
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "An override with no stated reason is not evidence of anything. This is the one place the schema is stricter than the Rust type, which can only enforce it at the constructor.",
+          "if": {
+            "properties": {
+              "override": {
+                "const": true
+              }
+            },
+            "required": [
+              "override"
+            ]
+          },
+          "then": {
+            "properties": {
+              "override_reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "$comment": "A recorded duration must carry a recorded source, and vice versa. This is the schema-level form of the CHECK constraint decision_reviews_duration_needs_a_source in backend/api/migrations/0006_decision_capture.sql. Splitting the pair is the shape a client-timed 1.2 seconds would take if it wanted to be read as a server measurement.",
+          "if": {
+            "properties": {
+              "review_duration_ms": {
+                "properties": {
+                  "state": {
+                    "const": "recorded"
+                  }
+                },
+                "required": [
+                  "state"
+                ]
+              }
+            },
+            "required": [
+              "review_duration_ms"
+            ]
+          },
+          "then": {
+            "properties": {
+              "review_duration_source": {
+                "properties": {
+                  "state": {
+                    "const": "recorded"
+                  }
+                },
+                "required": [
+                  "state"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "$comment": "The converse: a source naming how a duration was measured, with no duration.",
+          "if": {
+            "properties": {
+              "review_duration_source": {
+                "properties": {
+                  "state": {
+                    "const": "recorded"
+                  }
+                },
+                "required": [
+                  "state"
+                ]
+              }
+            },
+            "required": [
+              "review_duration_source"
+            ]
+          },
+          "then": {
+            "properties": {
+              "review_duration_ms": {
+                "properties": {
+                  "state": {
+                    "const": "recorded"
+                  }
+                },
+                "required": [
+                  "state"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "evidenceBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_artifacts",
+        "cryptographic_proofs"
+      ],
+      "properties": {
+        "evidence_artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "uri",
+              "digest"
+            ],
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "uri": {
+                "$comment": "Relative to the verification bundle root, e.g. proof/wealth_suitability.proof. Not an http URL: a bundle that resolves its own contents over the network is not offline-verifiable.",
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"
+              },
+              "digest": {
+                "$ref": "#/$defs/sha256Hex"
+              }
+            }
+          }
+        },
+        "cryptographic_proofs": {
+          "$comment": "Every attempt, accepted and rejected. A pack showing only the accepted proof hides the four that failed first, which is exactly the pattern a reviewer is looking for.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "circuit",
+              "proof_digest",
+              "public_inputs",
+              "verification_key_digest",
+              "accepted_by_bb_verify"
+            ],
+            "properties": {
+              "circuit": {
+                "type": "string"
+              },
+              "proof_digest": {
+                "$ref": "#/$defs/sha256Hex"
+              },
+              "public_inputs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "verification_key_digest": {
+                "$ref": "#/$defs/sha256Hex"
+              },
+              "accepted_by_bb_verify": {
+                "$comment": "Whether bb verify exited 0. NOT the decision: a valid proof of unsuitability verifies successfully. The verdict is decision.final_decision.outcome, read from the circuit's public output.",
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -61,6 +61,44 @@ from scripts.export_audit_evidence import (  # noqa: E402
 )
 from test_evidence_exporter import evidence_fixture  # noqa: E402
 
+@pytest.fixture(autouse=True)
+def _contain_the_network_guard():
+    """Undo `install_network_guard()` after every test in this module.
+
+    The guard is deliberately irreversible in production — it makes an
+    outbound connection impossible "for the rest of this process", which is
+    the correct design for a verifier whose whole claim is that it read the
+    pinned files and nothing else. It patches `socket.socket.connect`,
+    `connect_ex` and `socket.create_connection` at module level.
+
+    In a pytest session that is a shared, global mutation. Any test here that
+    exercises the real verification path installs it, and it then survives
+    into every later test file: the run this fixture was written for reported
+    2 failures and 32 errors across unrelated suites, every one of them a
+    `NetworkAttempted` raised out of a test that had nothing to do with the
+    bundle. The tests were fine; the session was poisoned.
+
+    The fix belongs here rather than in the verifier. Adding an `uninstall()`
+    for the convenience of tests would put a switch on a control whose value
+    is that it has no switch. So this snapshots the three attributes and puts
+    them back, containing the blast radius to this module without weakening
+    what ships.
+    """
+    import socket as socket_module
+
+    saved = (
+        socket_module.socket.connect,
+        socket_module.socket.connect_ex,
+        socket_module.create_connection,
+    )
+    try:
+        yield
+    finally:
+        socket_module.socket.connect = saved[0]
+        socket_module.socket.connect_ex = saved[1]
+        socket_module.create_connection = saved[2]
+
+
 AS_OF = datetime(2026, 9, 16, 9, 0, 0, tzinfo=timezone.utc)
 
 # The same fixed seed the integration tests and the CRO demo use, so the `kid`

@@ -1,17 +1,35 @@
-// DecisionEvidence v1 — the record a regulator reads when nobody from
-// Memtara is in the room.
+// DecisionEvidence — the record a regulator reads when nobody from Memtara
+// is in the room.
 //
-// Nothing in this module is wired into a route yet. It is the type, the
-// canonical form and the invariants; the integration that makes
-// `wealth/evidence.rs` emit one of these is a separate, later task. The
-// module is registered in main.rs so that it compiles and its tests run in
-// CI from today, because a schema that only compiles once someone integrates
-// it is a schema that drifts before it ships.
+// INTEGRATED as of schema 1.1.0. `wealth/evidence.rs::build_decision_evidence`
+// is the single construction site; `GET /api/v1/wealth-assessments/:id/
+// decision-evidence` serves it and `POST .../review` returns it. The note
+// that used to stand here — "nothing in this module is wired into a route
+// yet" — is no longer true, and the model and human_review blocks now carry
+// captured values rather than placeholders.
 //
-// `dead_code`/`unused_imports` are allowed for exactly that reason: this is a
-// binary crate, so until a route constructs a `DecisionEvidence` every public
-// item here is unreachable and every re-export is unused. Both allows should
-// come off in the integration task, not stay as permanent furniture.
+// -------------------------------------------------------------------
+// WHY THE ALLOW IS STILL HERE, HONESTLY
+// -------------------------------------------------------------------
+// The previous note said both allows should come off in the integration
+// task. They cannot come off cleanly yet, and pretending otherwise by
+// deleting the line would trade one inaccurate comment for six new warnings.
+// Removing it today reports: `canonical_bytes`/`canonical_sha256_hex` and
+// `FieldState` as unused re-exports (callers reach them through the
+// inherent methods and through `Provenanced`), `ModelAttestation::
+// asserts_no_ai`/`identity`, `DecisionEvidence::canonical_bytes`, and
+// `Provenanced::is_coherent`/`is_recorded` as never used — every one of them
+// exercised only by this module's own tests.
+//
+// Those are real observations about a binary crate, not noise to suppress
+// permanently. What removes the allow for good is a caller outside the
+// tests reaching them: the offline verification bundle needs
+// `canonical_bytes` and `is_coherent` (a record whose leaves contradict
+// their own state should fail bundle validation, not travel), and the
+// exporter needs `asserts_no_ai` to render "no AI participated" as a
+// sentence rather than as an absent section. Both are named work, neither is
+// this task, and the allow should be reviewed again when the first of them
+// lands rather than left to become permanent furniture.
 #![allow(dead_code, unused_imports)]
 
 pub mod canonical;
@@ -29,7 +47,7 @@ pub use provenance::{FieldState, Provenanced};
 
 /// The version of *this* schema. It is written into every record, inside the
 /// signed payload (see `DecisionEvidence::evidence_schema_version`), and it
-/// is the key an examiner uses to find `schema/decision_evidence/v1.0.0.json`
+/// is the key an examiner uses to find `schema/decision_evidence/v1.1.0.json`
 /// in the repo at the matching tag.
 ///
 /// Bumping this is not a code change on its own. A new value requires a new
@@ -37,7 +55,29 @@ pub use provenance::{FieldState, Provenanced};
 /// immutable once any record has been sealed against it, for the same reason
 /// `circuits/wealth_suitability/vkey/vk_hash` is committed and CI-pinned — a
 /// digest an examiner cannot re-derive two years later is not evidence.
-pub const EVIDENCE_SCHEMA_VERSION: &str = "1.0.0";
+///
+/// -------------------------------------------------------------------
+/// 1.0.0 -> 1.1.0: WHY
+/// -------------------------------------------------------------------
+/// `human_review` gained two keys — `review_duration_ms` and
+/// `review_duration_source`. `schema/decision_evidence/v1.0.0.json` sets
+/// `additionalProperties: false` on every block, so a 1.1.0 record is not a
+/// valid 1.0.0 record and must not claim to be one. v1.0.0.json is left
+/// byte-for-byte alone and `v1.1.0.json` was added beside it.
+///
+/// The addition is the Cigna field. In that litigation the finding that
+/// ended the argument was a duration — roughly 1.2 seconds per claim, in
+/// batches, without the file being opened. Every one of those denials had a
+/// named reviewer, a timestamp and an action; a record carrying only the
+/// v1.0.0 fields would have described them as fully reviewed. A firm's own
+/// compliance function must be able to see that pattern in its own data, and
+/// it cannot see it in fields that do not exist.
+///
+/// The bump is a minor version because the change is purely additive: every
+/// v1.0.0 key survives with its meaning intact, so a reader written for
+/// 1.0.0 that ignores unknown keys still reads a 1.1.0 record correctly.
+/// Nothing was removed, renamed, or re-constrained.
+pub const EVIDENCE_SCHEMA_VERSION: &str = "1.1.0";
 
 // =====================================================================
 // The record
@@ -463,11 +503,117 @@ pub struct HumanReviewBlock {
     pub overridden: bool,
     /// Genuinely nullable by meaning: there is no reason when there was no
     /// override. Null, never missing — the key is present in both cases.
+    ///
+    /// The pairing `overridden == true && override_reason == None` is
+    /// forbidden in three independent places, because it is the one field
+    /// combination in this record that can turn a control failure into a
+    /// clean-looking row: the JSON schema forbids it for a record, the
+    /// `ReviewOverride` input type makes it unconstructable through the
+    /// builder, and `decision_reviews_override_requires_reason`
+    /// (migrations/0006) forbids it for a row — the only one of the three
+    /// that survives someone writing to Postgres by hand.
+    /// `validate_override_pairing` below is the check for a record that
+    /// arrived by deserialisation, where no constructor ran at all.
     pub override_reason: Option<String>,
     pub reviewed_at: Provenanced<DateTime<Utc>>,
     /// Which revision of the firm's review procedure the reviewer worked
     /// under. Nothing in the codebase records a review procedure at all.
     pub human_review_protocol_version: Provenanced<String>,
+    /// How long the reviewer spent on this decision, in milliseconds.
+    ///
+    /// -------------------------------------------------------------------
+    /// WHY A DURATION IS A FIRST-CLASS FIELD AND NOT AN ANALYTICS CONCERN
+    /// -------------------------------------------------------------------
+    /// This is the field the Cigna case turned on. Medical directors were
+    /// found to have cleared claims at about 1.2 seconds each, in batches,
+    /// without opening the file. Every one of those reviews had a named
+    /// reviewer, a timestamp and an action — the whole of v1.0.0's
+    /// `human_review` block — and by that record they were reviews. The
+    /// duration is what made them not reviews.
+    ///
+    /// A firm that captures this from month one can run the query against
+    /// itself before anyone else runs it against them, which is the entire
+    /// commercial proposition of this record. A firm that does not cannot
+    /// reconstruct it later: the clock is only observable while the review
+    /// is happening.
+    pub review_duration_ms: Provenanced<i64>,
+    /// How `review_duration_ms` was arrived at.
+    ///
+    /// Separate from the number, and more important than it. A duration a
+    /// reviewer's own client asserts is exactly the number a firm gaming
+    /// this metric would inflate, so an examiner must be able to tell an
+    /// asserted duration from a measured one without asking us — and a
+    /// duration whose provenance is unstated is admissible as neither.
+    /// Values match `decision_reviews.review_duration_source`
+    /// (migrations/0006): `reviewer_client_asserted`, or
+    /// `server_computed_from_declared_start`.
+    pub review_duration_source: Provenanced<String>,
+}
+
+/// Whether this review went against the control, and if so why.
+///
+/// -------------------------------------------------------------------
+/// WHY THIS IS AN ENUM AND NOT A `bool` PLUS AN `Option<String>`
+/// -------------------------------------------------------------------
+/// `override: true` with no reason is not a weaker record — it is the shape
+/// a bypassed control takes when nobody wants to write down that they
+/// bypassed it. Left as two independent fields, that pairing is one forgotten
+/// `if` away at every call site, forever. As a sum type it does not exist:
+/// there is no way to name the overridden case without carrying a reason,
+/// and `overridden()` refuses a blank or a token one.
+///
+/// The serialised record still has the two flat keys the pinned schema
+/// defines — this type governs construction, not the wire form. That
+/// asymmetry is deliberate: the wire form is fixed by v1.0.0 and cannot
+/// change, and the invariant belongs to whoever is building a record, not to
+/// whoever is reading one back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReviewOverride {
+    /// The reviewer's action agreed with the control's verdict.
+    NotOverridden,
+    /// The reviewer went against the control, for this stated reason.
+    Overridden { reason: String },
+}
+
+/// The shortest override reason this will accept. Ten characters is not a
+/// quality bar and does not pretend to be one — it is the floor that stops
+/// `"x"`, `"n/a"` and `"-"`, which are the three things a required free-text
+/// field actually collects when nobody means to fill it in. The same floor is
+/// a CHECK constraint in migrations/0006 so the two cannot drift.
+const MIN_OVERRIDE_REASON_CHARS: usize = 10;
+
+/// The refusal returned when an override is offered without a usable reason.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "an override must state why. A recorded override with no reason is the shape a bypassed \
+     control takes when nobody wants to write down that they bypassed it, so it is refused \
+     here rather than stored and explained later; give at least {MIN_OVERRIDE_REASON_CHARS} \
+     characters naming what the reviewer knew that the control did not"
+)]
+pub struct OverrideReasonMissing;
+
+impl ReviewOverride {
+    /// The overriding case. Fallible on purpose: this is the only route to
+    /// `overridden = true` through the builder, so the reason cannot be
+    /// omitted, blanked, or filled with a placeholder.
+    pub fn overridden(reason: impl Into<String>) -> Result<Self, OverrideReasonMissing> {
+        let reason = reason.into();
+        if reason.trim().chars().count() < MIN_OVERRIDE_REASON_CHARS {
+            return Err(OverrideReasonMissing);
+        }
+        Ok(Self::Overridden { reason })
+    }
+
+    fn flag(&self) -> bool {
+        matches!(self, Self::Overridden { .. })
+    }
+
+    fn reason(&self) -> Option<String> {
+        match self {
+            Self::NotOverridden => None,
+            Self::Overridden { reason } => Some(reason.clone()),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -554,20 +700,143 @@ pub struct DecisionInputs {
     pub threshold_values: BTreeMap<String, Value>,
     pub regulatory_control_mapping: Vec<RegulatoryControl>,
     pub model: ModelAttestation,
-    pub human_review_performed: bool,
-    pub human_action: DecisionAction,
-    pub overridden: bool,
-    pub override_reason: Option<String>,
+    pub human_review: HumanReviewInputs,
     pub evidence_artifacts: Vec<EvidenceArtifact>,
     pub cryptographic_proofs: Vec<CryptographicProof>,
+
+    // -----------------------------------------------------------------
+    // Fields that were hardcoded to `unpopulated` in the v1.0.0 builder
+    // because nothing could source them, and that now have a source. They
+    // are `Provenanced` rather than plain values because "this deployment
+    // can source it" and "this particular decision has it" are different
+    // questions: an assessment opened before migrations/0007 genuinely has
+    // no `threshold_version`, and the honest record of that is an
+    // `unpopulated` with a reason, not a fabricated `1`.
+    // -----------------------------------------------------------------
+    /// The firm's own process taxonomy entry, e.g.
+    /// "wealth.suitability_recommendation". Still not a database lookup —
+    /// the module that implements a process is the one that can name it.
+    pub business_process: Provenanced<String>,
+    /// Derivable once human review exists: proof alone, proof plus a
+    /// concurring human, or a human against the proof.
+    pub decision_basis: Provenanced<DecisionBasis>,
+    /// Caller-supplied SHA-256 over the context the deciding system saw.
+    pub input_context_fingerprint: Provenanced<String>,
+    /// Caller-supplied SHA-256 over the decision's structured output.
+    pub output_fingerprint: Provenanced<String>,
+    /// Circuit public input 2, as submitted and as checked against the
+    /// holder's registered root.
+    pub vault_root: Provenanced<String>,
+    /// Which registry row supplied the thresholds — `products.id`.
+    pub threshold_set_id: Provenanced<String>,
+    /// `products.terms_version` as snapshotted at open time.
+    pub threshold_version: Provenanced<String>,
 }
+
+/// The human-review half of `DecisionInputs`, separated because it is the
+/// only part of a record with a genuine two-state shape — a human reviewed
+/// this, or nobody did — and because that distinction has to be made once,
+/// at a constructor, rather than by six fields agreeing with each other at
+/// every call site.
+pub struct HumanReviewInputs {
+    performed: bool,
+    reviewer_id: Provenanced<String>,
+    reviewer_role: Provenanced<String>,
+    action: DecisionAction,
+    overridden: bool,
+    override_reason: Option<String>,
+    reviewed_at: Provenanced<DateTime<Utc>>,
+    protocol_version: Provenanced<String>,
+    review_duration_ms: Provenanced<i64>,
+    review_duration_source: Provenanced<String>,
+}
+
+/// What a completed human review supplies. Every field is required except
+/// the duration pair, which is `None` when the reviewing client did not
+/// report one.
+pub struct CompletedReview {
+    pub reviewer_id: String,
+    pub reviewer_role: String,
+    pub action: DecisionAction,
+    pub over_ride: ReviewOverride,
+    pub reviewed_at: DateTime<Utc>,
+    pub protocol_version: String,
+    /// `(milliseconds, source)`. Both or neither — a duration with no
+    /// provenance is not admissible, so the pair is one `Option`, not two.
+    pub duration: Option<(i64, String)>,
+}
+
+impl HumanReviewInputs {
+    /// A human reviewed this decision.
+    pub fn completed(review: CompletedReview) -> Self {
+        let (duration_ms, duration_source) = match review.duration {
+            Some((ms, source)) => (
+                Provenanced::recorded(ms),
+                Provenanced::recorded(source),
+            ),
+            None => (
+                Provenanced::unpopulated(NO_DURATION),
+                Provenanced::unpopulated(NO_DURATION),
+            ),
+        };
+        Self {
+            performed: true,
+            reviewer_id: Provenanced::recorded(review.reviewer_id),
+            reviewer_role: Provenanced::recorded(review.reviewer_role),
+            action: review.action,
+            overridden: review.over_ride.flag(),
+            override_reason: review.over_ride.reason(),
+            reviewed_at: Provenanced::recorded(review.reviewed_at),
+            protocol_version: Provenanced::recorded(review.protocol_version),
+            review_duration_ms: duration_ms,
+            review_duration_source: duration_source,
+        }
+    }
+
+    /// Nobody reviewed this decision.
+    ///
+    /// `action` is still required and still records the disposition the
+    /// automated path reached — the type has no fourth variant and should
+    /// not grow one, because "a decision was reached" is what makes a record
+    /// exist at all. What stops that reading as a human's judgement is that
+    /// `performed` is false and every reviewer-identity field is
+    /// `NotApplicable`: a signed assertion that there was no review step,
+    /// not an admission that we lost the reviewer's name. Those are
+    /// different claims and an examiner must be able to tell them apart —
+    /// `Unpopulated` here would say "a human may well have reviewed this and
+    /// we failed to record who", which is a confession this deployment has
+    /// no reason to make.
+    pub fn not_performed(automated_action: DecisionAction) -> Self {
+        let absent = || Provenanced::not_applicable(NO_REVIEW);
+        Self {
+            performed: false,
+            reviewer_id: absent(),
+            reviewer_role: absent(),
+            action: automated_action,
+            overridden: false,
+            override_reason: None,
+            reviewed_at: Provenanced::not_applicable(NO_REVIEW),
+            protocol_version: absent(),
+            review_duration_ms: Provenanced::not_applicable(NO_REVIEW),
+            review_duration_source: Provenanced::not_applicable(NO_REVIEW),
+        }
+    }
+}
+
+const NO_REVIEW: &str = "no human review step was performed on this decision; \
+                         human_review.performed is false, and this field is not \
+                         applicable rather than missing";
+
+const NO_DURATION: &str = "the reviewing client did not report how long the review took; \
+                           supply review_duration_ms or review_started_at on \
+                           POST /api/v1/wealth-assessments/{id}/review to populate it";
 
 /// The reason string every field that this codebase cannot yet source
 /// carries. Kept as one constant so a reader grepping a sealed record finds
 /// every gap at once, and so no caller can invent a softer phrasing.
 const NO_SOURCE: &str =
-    "no source exists in memtara-api as of evidence schema 1.0.0; see \
-     schema/decision_evidence/v1.0.0.json for what would populate it";
+    "no source exists in memtara-api as of evidence schema 1.1.0; see \
+     schema/decision_evidence/v1.1.0.json for what would populate it";
 
 impl DecisionEvidence {
     /// Build a record, filling every field the codebase cannot yet source
@@ -582,15 +851,15 @@ impl DecisionEvidence {
             decision: DecisionBlock {
                 decision_id: input.decision_id,
                 institution: input.institution,
-                business_process: Provenanced::unpopulated(NO_SOURCE),
+                business_process: input.business_process,
                 status: input.status,
                 final_decision: FinalDecision {
                     outcome: input.outcome,
                     decided_at: input.decided_at,
-                    decision_basis: Provenanced::unpopulated(NO_SOURCE),
+                    decision_basis: input.decision_basis,
                 },
-                input_context_fingerprint: Provenanced::unpopulated(NO_SOURCE),
-                output_fingerprint: Provenanced::unpopulated(NO_SOURCE),
+                input_context_fingerprint: input.input_context_fingerprint,
+                output_fingerprint: input.output_fingerprint,
                 timestamps: Timestamps {
                     opened_at: input.opened_at,
                     assessed_at: input.assessed_at,
@@ -603,8 +872,8 @@ impl DecisionEvidence {
                 source: input.policy_source,
                 decision_logic_version: Provenanced::unpopulated(NO_SOURCE),
                 thresholds: Thresholds {
-                    threshold_set_id: Provenanced::unpopulated(NO_SOURCE),
-                    threshold_version: Provenanced::unpopulated(NO_SOURCE),
+                    threshold_set_id: input.threshold_set_id,
+                    threshold_version: input.threshold_version,
                     values: input.threshold_values,
                     source: input.threshold_source,
                 },
@@ -615,7 +884,7 @@ impl DecisionEvidence {
                     subject_id: input.subject_id,
                     data_provenance: DataProvenance {
                         disclosed_attributes: input.disclosed_attributes,
-                        vault_root: Provenanced::unpopulated(NO_SOURCE),
+                        vault_root: input.vault_root,
                         statement: input.provenance_statement,
                     },
                     data_provenance_version: Provenanced::unpopulated(NO_SOURCE),
@@ -631,14 +900,16 @@ impl DecisionEvidence {
             },
             model: input.model,
             human_review: HumanReviewBlock {
-                performed: input.human_review_performed,
-                reviewer_id: Provenanced::unpopulated(NO_SOURCE),
-                reviewer_role: Provenanced::unpopulated(NO_SOURCE),
-                action: input.human_action,
-                overridden: input.overridden,
-                override_reason: input.override_reason,
-                reviewed_at: Provenanced::unpopulated(NO_SOURCE),
-                human_review_protocol_version: Provenanced::unpopulated(NO_SOURCE),
+                performed: input.human_review.performed,
+                reviewer_id: input.human_review.reviewer_id,
+                reviewer_role: input.human_review.reviewer_role,
+                action: input.human_review.action,
+                overridden: input.human_review.overridden,
+                override_reason: input.human_review.override_reason,
+                reviewed_at: input.human_review.reviewed_at,
+                human_review_protocol_version: input.human_review.protocol_version,
+                review_duration_ms: input.human_review.review_duration_ms,
+                review_duration_source: input.human_review.review_duration_source,
             },
             evidence: EvidenceBlock {
                 evidence_artifacts: input.evidence_artifacts,
@@ -655,6 +926,49 @@ impl DecisionEvidence {
     /// The value that goes in the seal's `canonical_evidence_sha256`.
     pub fn canonical_sha256_hex(&self) -> Result<String, CanonicalError> {
         canonical::canonical_sha256_hex(self)
+    }
+
+    /// The override pairing, checked on a record that did not come through
+    /// `from_inputs`.
+    ///
+    /// `ReviewOverride` makes the bad pairing unconstructable through the
+    /// builder and migrations/0006 makes it unstorable, but neither runs
+    /// when a record arrives as bytes: `serde` will happily deserialise
+    /// `{"override": true, "override_reason": null}` because the pinned
+    /// wire shape is two independent keys and always will be. So a reader
+    /// gets an explicit check rather than an assumption. This is the same
+    /// reasoning as `Provenanced::is_coherent`, which exists for exactly the
+    /// case of a hand-edited record claiming a state its value contradicts.
+    pub fn validate_override_pairing(&self) -> Result<(), OverrideReasonMissing> {
+        let stated = self
+            .human_review
+            .override_reason
+            .as_deref()
+            .map(|r| r.trim().chars().count())
+            .unwrap_or(0);
+        if self.human_review.overridden && stated < MIN_OVERRIDE_REASON_CHARS {
+            return Err(OverrideReasonMissing);
+        }
+        Ok(())
+    }
+}
+
+/// Why the decision came out the way it did, derived from whether a human
+/// stood behind it and whether they agreed with the control.
+///
+/// A function rather than three assignments at the call site, because
+/// `ProofAndHumanOverride` is the variant a supervisor greps for and it must
+/// not be possible for one code path to reach an override without setting
+/// it. `HumanOnlyProofUnavailable` is deliberately not reachable here: it
+/// belongs to the continuity mode where the proof service is down and a
+/// human decides anyway, which this system cannot do today, and inferring it
+/// from `NoVerdict` would let an outage plus a review manufacture a basis
+/// nobody implemented.
+pub fn derive_decision_basis(review: &HumanReviewInputs) -> DecisionBasis {
+    match (review.performed, review.overridden) {
+        (false, _) => DecisionBasis::ProofOnly,
+        (true, false) => DecisionBasis::ProofAndHumanApproved,
+        (true, true) => DecisionBasis::ProofAndHumanOverride,
     }
 }
 
@@ -683,6 +997,18 @@ mod tests {
         outcome: DecisionOutcome,
         action: DecisionAction,
         model: ModelAttestation,
+    ) -> DecisionEvidence {
+        fixture_with_review(status, outcome, model, HumanReviewInputs::not_performed(action))
+    }
+
+    /// The same fixture with the human-review block supplied directly, so
+    /// the reviewed and unreviewed paths can be compared as records rather
+    /// than described in prose.
+    fn fixture_with_review(
+        status: DecisionAction,
+        outcome: DecisionOutcome,
+        model: ModelAttestation,
+        review: HumanReviewInputs,
     ) -> DecisionEvidence {
         let mut values = BTreeMap::new();
         values.insert("min_income".to_string(), Value::from(500_000i64));
@@ -723,10 +1049,14 @@ mod tests {
                 },
             ],
             model,
-            human_review_performed: false,
-            human_action: action,
-            overridden: false,
-            override_reason: None,
+            human_review: review,
+            business_process: Provenanced::unpopulated(NO_SOURCE),
+            decision_basis: Provenanced::unpopulated(NO_SOURCE),
+            input_context_fingerprint: Provenanced::unpopulated(NO_SOURCE),
+            output_fingerprint: Provenanced::unpopulated(NO_SOURCE),
+            vault_root: Provenanced::unpopulated(NO_SOURCE),
+            threshold_set_id: Provenanced::unpopulated(NO_SOURCE),
+            threshold_version: Provenanced::unpopulated(NO_SOURCE),
             evidence_artifacts: vec![EvidenceArtifact {
                 artifact_type: "zk_proof".to_string(),
                 uri: "proof/wealth_suitability.proof".to_string(),
@@ -757,6 +1087,24 @@ mod tests {
             DecisionOutcome::Negative,
             DecisionAction::Rejected,
             ModelAttestation::no_ai_participated(),
+        )
+    }
+
+    /// The same decision with a human behind it, timed.
+    fn reviewed_approval() -> DecisionEvidence {
+        fixture_with_review(
+            DecisionAction::Approved,
+            DecisionOutcome::Affirmative,
+            ModelAttestation::no_ai_participated(),
+            HumanReviewInputs::completed(CompletedReview {
+                reviewer_id: "emp-4417".to_string(),
+                reviewer_role: "senior_suitability_officer".to_string(),
+                action: DecisionAction::Approved,
+                over_ride: ReviewOverride::NotOverridden,
+                reviewed_at: ts("2026-08-18T18:31:00Z"),
+                protocol_version: "cob-review-2026.2".to_string(),
+                duration: Some((214_000, "reviewer_client_asserted".to_string())),
+            }),
         )
     }
 
@@ -879,12 +1227,34 @@ mod tests {
         );
 
         // Present in the bytes the digest is taken over.
-        assert!(text.contains(r#""evidence_schema_version":"1.0.0""#));
+        assert!(text.contains(r#""evidence_schema_version":"1.1.0""#));
+
+        // The pinned file for this version exists. A record naming a schema
+        // nobody can open is a record an examiner cannot check, and the
+        // failure mode is silent: the string looks like an answer.
+        let pinned = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schema/decision_evidence")
+            .join(format!("v{EVIDENCE_SCHEMA_VERSION}.json"));
+        assert!(
+            pinned.exists(),
+            "every record names a schema version; the file for {EVIDENCE_SCHEMA_VERSION} must be \
+             committed at {}",
+            pinned.display()
+        );
+
+        // v1.0.0 is immutable and stays on disk beside it. Records sealed
+        // under it are still readable, which is the whole reason a bump is a
+        // new file rather than an edit.
+        assert!(pinned
+            .parent()
+            .unwrap()
+            .join("v1.0.0.json")
+            .exists());
 
         // And covered by the digest: change it, and the digest changes.
         let before = record.canonical_sha256_hex().unwrap();
         let mut tampered = record.clone();
-        tampered.evidence_schema_version = "1.0.1".to_string();
+        tampered.evidence_schema_version = "1.0.0".to_string();
         assert_ne!(before, tampered.canonical_sha256_hex().unwrap());
     }
 
@@ -1013,41 +1383,34 @@ mod tests {
     #[test]
     fn canonical_bytes_of_the_fixed_fixture_do_not_drift() {
         const EXPECTED: &str = concat!(
-            r#"{"data":{"consent":{"consent_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""consent_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""granted_at":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""purpose_hash":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""scope":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null}},"#,
-            r#""customer":{"data_provenance":{"disclosed_attributes":[],"statement":"Memtara holds no income, liquidity, risk-tolerance or holdings figure for this subject.","#,
-            r#""vault_root":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null}},"#,
-            r#""data_provenance_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
+            r#"{"data":{"consent":{"consent_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
+            r#""consent_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
+            r#""granted_at":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
+            r#""purpose_hash":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
+            r#""scope":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null}},"#,
+            r#""customer":{"data_provenance":{"disclosed_attributes":[],"statement":"Memtara holds no income, liquidity, risk-tolerance or holdings figure for this subject.","vault_root":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null}},"#,
+            r#""data_provenance_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
             r#""subject_id":"user_9f2a"},"#,
-            r#""data_schema_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null}},"#,
-            r#""decision":{"business_process":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""decision_id":"71386234-daae-4896-91fe-4c469cf59af2","#,
-            r#""final_decision":{"decided_at":"2026-08-18T18:03:52Z","decision_basis":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"outcome":"affirmative"},"#,
-            r#""input_context_fingerprint":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
+            r#""data_schema_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null}},"#,
+            r#""decision":{"business_process":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
+            r#""decision_id":"71386234-daae-4896-91fe-4c469cf59af2","final_decision":{"decided_at":"2026-08-18T18:03:52Z","decision_basis":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
+            r#""outcome":"affirmative"},"#,
+            r#""input_context_fingerprint":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
             r#""institution":{"org_id":"2f1c8d4e-0a1b-4c3d-9e8f-7a6b5c4d3e2f","org_name":"Example Bank PJSC","org_type":"bank"},"#,
-            r#""output_fingerprint":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""status":"approved","#,
-            r#""timestamps":{"assessed_at":"2026-08-18T18:03:52Z","exported_at":"2026-08-18T18:04:00Z","opened_at":"2026-08-18T17:59:00Z"}},"#,
-            r#""evidence":{"cryptographic_proofs":[{"accepted_by_bb_verify":true,"circuit":"wealth_suitability","proof_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","public_inputs":["0x01","0x02"],"verification_key_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}],"#,
-            r#""evidence_artifacts":[{"digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","type":"zk_proof","uri":"proof/wealth_suitability.proof"}]},"#,
-            r#""evidence_schema_version":"1.0.0","#,
-            r#""human_review":{"action":"approved","human_review_protocol_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""override":false,"override_reason":null,"performed":false,"#,
-            r#""reviewed_at":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""reviewer_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""reviewer_role":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null}},"#,
-            r#""model":null,"#,
-            r#""policy":{"decision_logic_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""policy_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""policy_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""regulatory_control_mapping":[{"clause":"COB 3.1","framework":"DFSA"},{"clause":"5(c)","framework":"CBUAE"}],"#,
-            r#""source":"disclosure_requests.policy, snapshotted at open","#,
-            r#""thresholds":{"source":"product registry, snapshotted when the assessment was opened","#,
-            r#""threshold_set_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
-            r#""threshold_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.0.0; see schema/decision_evidence/v1.0.0.json for what would populate it","value":null},"#,
+            r#""output_fingerprint":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
+            r#""status":"approved","timestamps":{"assessed_at":"2026-08-18T18:03:52Z","exported_at":"2026-08-18T18:04:00Z","opened_at":"2026-08-18T17:59:00Z"}},"#,
+            r#""evidence":{"cryptographic_proofs":[{"accepted_by_bb_verify":true,"circuit":"wealth_suitability","proof_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","public_inputs":["0x01","0x02"],"verification_key_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}],"evidence_artifacts":[{"digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","type":"zk_proof","uri":"proof/wealth_suitability.proof"}]},"#,
+            r#""evidence_schema_version":"1.1.0","human_review":{"action":"approved","human_review_protocol_version":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
+            r#""override":false,"override_reason":null,"performed":false,"review_duration_ms":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
+            r#""review_duration_source":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
+            r#""reviewed_at":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
+            r#""reviewer_id":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
+            r#""reviewer_role":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null}},"#,
+            r#""model":null,"policy":{"decision_logic_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
+            r#""policy_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
+            r#""policy_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
+            r#""regulatory_control_mapping":[{"clause":"COB 3.1","framework":"DFSA"},{"clause":"5(c)","framework":"CBUAE"}],"source":"disclosure_requests.policy, snapshotted at open","thresholds":{"source":"product registry, snapshotted when the assessment was opened","threshold_set_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
+            r#""threshold_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
             r#""values":{"max_concentration_percent":20,"min_income":500000,"min_liquidity":250000,"product_risk_level":3}}}}"#,
         );
 
@@ -1144,6 +1507,258 @@ mod tests {
                 "missing required version field {pointer}"
             );
         }
+    }
+
+    // -----------------------------------------------------------------
+    // INVARIANT 4 — an override always states why
+    // -----------------------------------------------------------------
+
+    /// The negative control for the one field pairing that can turn a
+    /// bypassed control into a clean-looking row.
+    ///
+    /// What it catches: a future `ReviewOverride::Overridden` constructed
+    /// directly rather than through `overridden()`; a relaxation of the
+    /// minimum length that lets `"n/a"` through; and — via
+    /// `validate_override_pairing` — a record that arrived as bytes with
+    /// `override: true` and a null reason, which `serde` will always accept
+    /// because the pinned wire shape is two independent keys.
+    ///
+    /// The pairing is forbidden in three places and this test walks all
+    /// three, because two of them are unreachable from the third: the DB
+    /// constraint does not run in a unit test and the constructor does not
+    /// run on a deserialised record.
+    #[test]
+    fn an_override_without_a_reason_cannot_be_built_or_read_back_as_valid() {
+        // (a) The constructor refuses every shape of "no reason".
+        for empty in ["", "   ", "n/a", "-", "\t\n", "why"] {
+            assert_eq!(
+                ReviewOverride::overridden(empty),
+                Err(OverrideReasonMissing),
+                "an override reason of {empty:?} must be refused"
+            );
+        }
+        let good = ReviewOverride::overridden(
+            "client's documented liquidity event post-dates the vault snapshot",
+        )
+        .expect("a real reason is accepted");
+
+        // (b) A record built through the builder carries both halves or
+        //     neither. There is no route to `override: true` with a null
+        //     reason, because the only constructor for the overridden case
+        //     consumes a reason.
+        let overridden = fixture_with_review(
+            DecisionAction::Approved,
+            DecisionOutcome::Negative,
+            ModelAttestation::no_ai_participated(),
+            HumanReviewInputs::completed(CompletedReview {
+                reviewer_id: "emp-4417".to_string(),
+                reviewer_role: "senior_suitability_officer".to_string(),
+                action: DecisionAction::Approved,
+                over_ride: good,
+                reviewed_at: ts("2026-08-18T18:31:00Z"),
+                protocol_version: "cob-review-2026.2".to_string(),
+                duration: Some((214_000, "reviewer_client_asserted".to_string())),
+            }),
+        );
+        let v = serde_json::to_value(&overridden).unwrap();
+        assert_eq!(v.pointer("/human_review/override"), Some(&Value::Bool(true)));
+        assert!(v
+            .pointer("/human_review/override_reason")
+            .and_then(Value::as_str)
+            .is_some_and(|r| r.contains("liquidity event")));
+        assert!(overridden.validate_override_pairing().is_ok());
+
+        // (c) The same record hand-edited the way an insider would edit it —
+        //     keep the flag, drop the justification — is refused on read.
+        let mut tampered = overridden.clone();
+        tampered.human_review.override_reason = None;
+        assert_eq!(
+            tampered.validate_override_pairing(),
+            Err(OverrideReasonMissing)
+        );
+        tampered.human_review.override_reason = Some("   ".to_string());
+        assert_eq!(
+            tampered.validate_override_pairing(),
+            Err(OverrideReasonMissing)
+        );
+
+        // And the check is not vacuous: a non-override with no reason is
+        // fine, which is the whole point of the field being nullable.
+        assert!(approval().validate_override_pairing().is_ok());
+    }
+
+    /// A decision nobody reviewed must not carry a reviewer's judgement.
+    ///
+    /// `action` stays required — the type has three variants and no
+    /// `Pending`, because a record exists only once a decision was reached —
+    /// so the load-bearing part is everything around it: `performed: false`
+    /// and every reviewer-identity field asserting non-applicability rather
+    /// than admitting ignorance. Those are different claims. `Unpopulated`
+    /// would say "a human may have reviewed this and we lost the name",
+    /// which is a confession this deployment has no reason to make.
+    #[test]
+    fn an_unreviewed_decision_asserts_that_no_human_stood_behind_it() {
+        let v = serde_json::to_value(approval()).unwrap();
+        assert_eq!(v.pointer("/human_review/performed"), Some(&Value::Bool(false)));
+        for field in [
+            "reviewer_id",
+            "reviewer_role",
+            "reviewed_at",
+            "human_review_protocol_version",
+            "review_duration_ms",
+            "review_duration_source",
+        ] {
+            assert_eq!(
+                v.pointer(&format!("/human_review/{field}/state"))
+                    .and_then(Value::as_str),
+                Some("not_applicable"),
+                "{field} must assert absence, not admit ignorance, when nobody reviewed"
+            );
+        }
+        assert_eq!(v.pointer("/human_review/override"), Some(&Value::Bool(false)));
+        assert_eq!(v.pointer("/human_review/override_reason"), Some(&Value::Null));
+
+        // A reviewed record is visibly different at every one of those keys.
+        let reviewed = reviewed_approval();
+        let rv = serde_json::to_value(&reviewed).unwrap();
+        assert_eq!(rv.pointer("/human_review/performed"), Some(&Value::Bool(true)));
+        assert_eq!(
+            rv.pointer("/human_review/reviewer_id/state")
+                .and_then(Value::as_str),
+            Some("recorded")
+        );
+        assert_ne!(
+            approval().canonical_sha256_hex().unwrap(),
+            reviewed.canonical_sha256_hex().unwrap()
+        );
+    }
+
+    /// The Cigna field, and the reason it is two fields.
+    ///
+    /// A duration with no stated provenance is admissible as neither an
+    /// asserted number nor a measured one, so the two travel together or not
+    /// at all. Catches a future change that records the milliseconds and
+    /// drops the source — which is the shape that would let a client-timed
+    /// 1.2 seconds be read as a server measurement.
+    #[test]
+    fn review_duration_and_its_provenance_are_recorded_together() {
+        let timed = reviewed_approval();
+        let v = serde_json::to_value(&timed).unwrap();
+        assert_eq!(
+            v.pointer("/human_review/review_duration_ms/value")
+                .and_then(Value::as_i64),
+            Some(214_000)
+        );
+        assert_eq!(
+            v.pointer("/human_review/review_duration_source/value")
+                .and_then(Value::as_str),
+            Some("reviewer_client_asserted")
+        );
+
+        // An untimed review: both unpopulated, both naming the input that
+        // would fill them. Never one recorded and one blank.
+        let untimed = fixture_with_review(
+            DecisionAction::Approved,
+            DecisionOutcome::Affirmative,
+            ModelAttestation::no_ai_participated(),
+            HumanReviewInputs::completed(CompletedReview {
+                reviewer_id: "emp-4417".to_string(),
+                reviewer_role: "senior_suitability_officer".to_string(),
+                action: DecisionAction::Approved,
+                over_ride: ReviewOverride::NotOverridden,
+                reviewed_at: ts("2026-08-18T18:31:00Z"),
+                protocol_version: "cob-review-2026.2".to_string(),
+                duration: None,
+            }),
+        );
+        let uv = serde_json::to_value(&untimed).unwrap();
+        for field in ["review_duration_ms", "review_duration_source"] {
+            assert_eq!(
+                uv.pointer(&format!("/human_review/{field}/state"))
+                    .and_then(Value::as_str),
+                Some("unpopulated"),
+                "{field}"
+            );
+            assert!(uv
+                .pointer(&format!("/human_review/{field}/unpopulated_reason"))
+                .and_then(Value::as_str)
+                .is_some_and(|r| r.contains("review_duration_ms")));
+        }
+
+        // The duration is inside the digested bytes. A number a firm can
+        // edit after the fact is not a finding, it is a spreadsheet.
+        let mut faster = timed.clone();
+        faster.human_review.review_duration_ms = Provenanced::recorded(1_200);
+        assert_ne!(
+            timed.canonical_sha256_hex().unwrap(),
+            faster.canonical_sha256_hex().unwrap()
+        );
+    }
+
+    /// `decision_basis` is derived, never assigned, so no code path can
+    /// reach an override without the basis that names it — the variant a
+    /// supervisor greps for.
+    #[test]
+    fn decision_basis_names_the_override_it_came_from() {
+        let none = HumanReviewInputs::not_performed(DecisionAction::Approved);
+        assert_eq!(derive_decision_basis(&none), DecisionBasis::ProofOnly);
+
+        let concurring = HumanReviewInputs::completed(CompletedReview {
+            reviewer_id: "e1".to_string(),
+            reviewer_role: "r".to_string(),
+            action: DecisionAction::Rejected,
+            over_ride: ReviewOverride::NotOverridden,
+            reviewed_at: ts("2026-08-18T18:31:00Z"),
+            protocol_version: "p".to_string(),
+            duration: None,
+        });
+        assert_eq!(
+            derive_decision_basis(&concurring),
+            DecisionBasis::ProofAndHumanApproved
+        );
+
+        let against = HumanReviewInputs::completed(CompletedReview {
+            reviewer_id: "e1".to_string(),
+            reviewer_role: "r".to_string(),
+            action: DecisionAction::Approved,
+            over_ride: ReviewOverride::overridden("documented liquidity event post-dates the vault")
+                .unwrap(),
+            reviewed_at: ts("2026-08-18T18:31:00Z"),
+            protocol_version: "p".to_string(),
+            duration: None,
+        });
+        assert_eq!(
+            derive_decision_basis(&against),
+            DecisionBasis::ProofAndHumanOverride
+        );
+    }
+
+    /// Rejection symmetry, held across the review dimension as well as the
+    /// three enums. A reviewed approval and a reviewed decline differ only
+    /// in values.
+    #[test]
+    fn key_set_is_invariant_across_reviewed_and_unreviewed_records() {
+        let baseline = paths_of(&approval());
+        let reviewed_declined = fixture_with_review(
+            DecisionAction::Rejected,
+            DecisionOutcome::Negative,
+            ModelAttestation::no_ai_participated(),
+            HumanReviewInputs::completed(CompletedReview {
+                reviewer_id: "emp-4417".to_string(),
+                reviewer_role: "senior_suitability_officer".to_string(),
+                action: DecisionAction::Rejected,
+                over_ride: ReviewOverride::NotOverridden,
+                reviewed_at: ts("2026-08-18T18:31:00Z"),
+                protocol_version: "cob-review-2026.2".to_string(),
+                duration: Some((214_000, "reviewer_client_asserted".to_string())),
+            }),
+        );
+        assert_eq!(paths_of(&reviewed_approval()), baseline);
+        assert_eq!(paths_of(&reviewed_declined), baseline);
+        assert_ne!(
+            reviewed_approval().canonical_sha256_hex().unwrap(),
+            reviewed_declined.canonical_sha256_hex().unwrap()
+        );
     }
 
     /// `NoVerdict` is not a synonym for a decline. The distinction
