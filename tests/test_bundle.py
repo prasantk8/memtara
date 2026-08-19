@@ -31,7 +31,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import os
+import shutil
 import stat
 import sys
 from datetime import datetime, timezone
@@ -119,6 +119,7 @@ def make_bundle(
     with_token: bool = True,
     with_aihoots: bool = True,
     signing_key=None,
+    provenance: str | None = None,
     name: str = "bundle",
 ) -> Path:
     """Build a real bundle through the real builder. Nothing here is stubbed.
@@ -177,6 +178,7 @@ def make_bundle(
         proof_path=proof_path,
         aihoots_audit_path=(REPO_ROOT / "cro_demo" / "aihoots_audit.jsonl") if with_aihoots else None,
         signing_key=signing_key,
+        provenance=provenance,
         created_at=AS_OF,
     )
     return output
@@ -713,6 +715,100 @@ def test_verify_md_scopes_independence_to_one_circuit(tmp_path):
     manifest = json.loads((make_bundle(tmp_path) / "MANIFEST.json").read_text())
     scope = " ".join(manifest["independence_scope"].split())
     assert "a property of one circuit, not of the system" in scope
+
+
+def test_the_checkpoint_slot_is_reserved_and_the_gap_is_stated(tmp_path):
+    """The terminal row of the chain is unprotected. Say so, and leave a socket for the fix.
+
+    Reported as INFO, not NOT RUN, on purpose: a check that no bundle in
+    existence can satisfy would make every bundle INCOMPLETE forever, which
+    would empty that word of meaning and bury the NOT RUNs that are genuinely
+    about the pack in front of you.
+    """
+    bundle = make_bundle(tmp_path)
+    absent = {item["path"]: item for item in json.loads((bundle / "MANIFEST.json").read_text())["absent"]}
+    assert "audit_chain_checkpoint.json" in absent
+    assert "followed" in absent["audit_chain_checkpoint.json"]["reason"].lower()
+
+    report = run(bundle)
+    step_7c = next(f for f in report.findings if f["step"] == "7c")
+    assert step_7c["status"] == verifier.INFO
+    assert step_7c["bears_on_integrity"] is False
+    detail = "\n".join(step_7c["detail"])
+    assert "WHAT IS THEREFORE UNPROTECTED" in detail
+    assert "WHAT THE CHECKPOINT WILL ADD" in detail
+    assert "never written" in detail, "the checkpoint's own limit must be stated too"
+
+    step_7 = "\n".join(next(f for f in report.findings if f["step"] == "7")["detail"])
+    assert "FOLLOWED by another record" in step_7
+
+
+def test_a_checkpoint_file_is_not_credited_by_a_verifier_that_cannot_check_it(tmp_path):
+    """Presence is not verification. An old verifier must not pass a new file."""
+    bundle = make_bundle(tmp_path)
+    checkpoint = bundle / "audit_chain_checkpoint.json"
+    checkpoint.write_text(json.dumps({"seq": 4131, "signature": "not checked by this version"}))
+
+    manifest_path = bundle / "MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["files"].append(
+        {
+            "path": "audit_chain_checkpoint.json",
+            "sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
+            "bytes": checkpoint.stat().st_size,
+            "what": "a checkpoint from a future build",
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+    report = run(bundle)
+    step_7c = next(f for f in report.findings if f["step"] == "7c")
+    assert step_7c["status"] == verifier.NOT_RUN
+    assert "does not yet know how to check it" in "\n".join(step_7c["detail"])
+    assert report.integrity_verdict == verifier.INTEGRITY_INCOMPLETE
+
+
+def test_provenance_is_carried_and_printed_before_any_pass(tmp_path):
+    """No check in the procedure can tell demo data from a live assessment."""
+    note = "DEMONSTRATION DATA: constructed offline, not a real client."
+    bundle = make_bundle(tmp_path, provenance=note)
+    assert json.loads((bundle / "MANIFEST.json").read_text())["provenance"] == note
+
+    report = run(bundle)
+    rendered = "\n".join(verifier.render_report(report, bundle))
+    assert note in rendered
+    assert rendered.index(note) < rendered.index("[   PASS]"), "provenance must precede the findings"
+
+    # And a builder that says nothing gets a default that tells the reader to ask.
+    silent = json.loads((make_bundle(tmp_path, name="silent") / "MANIFEST.json").read_text())
+    assert "Not stated by the builder" in silent["provenance"]
+
+
+def test_the_persisted_example_bundle_verifies_with_the_real_toolchain():
+    """The bundle checked into scripts/bundle/example/, verified as shipped.
+
+    Skips rather than fails without `bb`, matching the rest of this suite: a
+    missing local toolchain must never look like a broken bundle. When bb IS
+    present this is the only test in the repository that runs a real
+    Barretenberg verification end to end through the auditor's own procedure.
+    """
+    example = REPO_ROOT / "scripts" / "bundle" / "example"
+    if not example.is_dir():
+        pytest.skip("no example bundle checked in")
+
+    report = verifier.verify_bundle(example, bb_bin="bb")
+    assert failures(report) == []
+    assert report.outcome_verdict == "NOT SUITABLE"
+
+    step_5 = next(f for f in report.findings if f["step"] == "5")
+    if shutil.which("bb") is None:
+        assert step_5["status"] == verifier.NOT_RUN
+        assert report.integrity_verdict == verifier.INTEGRITY_INCOMPLETE
+        pytest.skip("bb is not on PATH, so step 5 could not be exercised")
+
+    assert step_5["status"] == verifier.PASS
+    assert "Proof verified successfully" in "\n".join(step_5["detail"])
+    assert report.integrity_verdict == verifier.INTEGRITY_VALID
 
 
 def test_the_cli_exit_code_encodes_the_integrity_verdict_only(tmp_path, capsys):

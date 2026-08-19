@@ -1,0 +1,193 @@
+{
+  "absent": [
+    {
+      "path": "audit_chain_checkpoint.json",
+      "reason": "No signed chain-head checkpoint exists yet in this deployment. A hash chain protects every record that has been FOLLOWED by another record; the last row in the chain is committed to by nothing, and Memtara's log stores no payload column, so it cannot be recomputed either. Until a published checkpoint exists, treat the most recent event in audit_chain_segment.jsonl as unprotected. See VERIFY.md step 7.",
+      "status": "reserved \u2014 a builder given --chain-checkpoint will populate this"
+    }
+  ],
+  "bundle_format_version": "1.0.0",
+  "canonical_evidence_sha256": "32740f0be3df9377263d3300fe7419d1f187164e0d3263b9e3a92e1dea7ad261",
+  "circuit": "wealth_suitability",
+  "created_at": "2026-08-19T09:23:31Z",
+  "files": [
+    {
+      "bytes": 19554,
+      "path": "VERIFY.md",
+      "sha256": "8d4c42cd1d016b41141c04508309435c2ecd5bc7ef0167f754fee47888835178",
+      "what": "The procedure. Read this first."
+    },
+    {
+      "bytes": 1037,
+      "path": "aihoots_audit_chain.jsonl",
+      "sha256": "220ec75f4401c42b7478247465db98f678023939686e26031f0206e7ded75254",
+      "what": "The relying party's own AIHOOTS chain. Unlike the Memtara segment this one is fully recomputable offline, which is why the vendored audit-verify can give a verdict on it."
+    },
+    {
+      "bytes": 503,
+      "path": "audit_chain_segment.jsonl",
+      "sha256": "e5a87e53a9f3bc30d0f78fb005ac3308f8fe0956e5d0512c218c4011cd7656d8",
+      "what": "This assessment's events from Memtara's global hash chain, exported. `seq` values are not consecutive by design: the chain interleaves every tenant."
+    },
+    {
+      "bytes": 48268,
+      "path": "case_file.pdf",
+      "sha256": "5bae21eb4df614c6c3edc4daefc41dde736cc3fc1c8173663a1fdf3ef07b1269",
+      "what": "The human-readable rendering of this record."
+    },
+    {
+      "bytes": 962,
+      "path": "case_file.pdf.seal.json",
+      "sha256": "2e7672093e8eff084549280d567dc213d9c9079e5fd63d6a328a6e2ea298b3a0",
+      "what": "The digest seal over the PDF and the evidence."
+    },
+    {
+      "bytes": 5030,
+      "path": "decision_evidence.json",
+      "sha256": "32740f0be3df9377263d3300fe7419d1f187164e0d3263b9e3a92e1dea7ad261",
+      "what": "The decision record, canonical form. Its SHA-256 is the seal's canonical_evidence_sha256."
+    },
+    {
+      "bytes": 7733,
+      "path": "evidence_schema/case_file_pack.v1.schema.json",
+      "sha256": "cd69b129b215c69ee43e97e5413bf21f0e84efcbb85794014b7db18a0bdd7358",
+      "what": "The structure decision_evidence.json is asserted to have."
+    },
+    {
+      "bytes": 972,
+      "path": "institution_and_thresholds.json",
+      "sha256": "02ac22a14cd6fe9937fa27fa0e4e68f4fee91517a7613c11148d156563af40e7",
+      "what": "The institution metadata and the thresholds this assessment was measured against."
+    },
+    {
+      "bytes": 1497,
+      "path": "jwks_snapshot.json",
+      "sha256": "12ccfd780504fe5eaaff6e63e2e9cfa8044b15773ea25f1d80cbf61a100735fd",
+      "what": "The issuer's key set as captured at export time, pinned by kid and RFC 7638 thumbprint. The verifier reads this file and never the network."
+    },
+    {
+      "bytes": 384,
+      "path": "proof/public_inputs",
+      "sha256": "67cb0512d9aa7d6307e8038ce7cc2a75f4efadde9e6cda4c1e40fd0f4acaae0a",
+      "what": "12 field elements, 32 bytes each, big-endian, in circuit order. Rebuilt from decision_evidence.json, so it is checkable rather than merely supplied."
+    },
+    {
+      "bytes": 14656,
+      "path": "proof/wealth_suitability.proof",
+      "sha256": "5a918a2496fc74d3089e97dc8d49e27e5454cd5e92cbfbbf78cc6388e172ab81",
+      "what": "The proof bytes, SHA-256-matched against proof_sha256 in the evidence record."
+    },
+    {
+      "bytes": 0,
+      "path": "tools/aihoots_reference/src/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "what": "AIHOOTS's own audit-verify at commit 97cf8f5a6b0512ca862310f5383d20b057da2991."
+    },
+    {
+      "bytes": 0,
+      "path": "tools/aihoots_reference/src/gateway/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "what": "AIHOOTS's own audit-verify at commit 97cf8f5a6b0512ca862310f5383d20b057da2991."
+    },
+    {
+      "bytes": 0,
+      "path": "tools/aihoots_reference/src/gateway/audit/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "what": "AIHOOTS's own audit-verify at commit 97cf8f5a6b0512ca862310f5383d20b057da2991."
+    },
+    {
+      "bytes": 4014,
+      "path": "tools/aihoots_reference/src/gateway/audit/chain.py",
+      "sha256": "89d2627fb7b6694d7cc58caef149d8f3e233c6bbb7521d2a66f0463a1d0f71cc",
+      "what": "AIHOOTS's own audit-verify at commit 97cf8f5a6b0512ca862310f5383d20b057da2991."
+    },
+    {
+      "bytes": 0,
+      "path": "tools/aihoots_reference/src/verifier/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "what": "AIHOOTS's own audit-verify at commit 97cf8f5a6b0512ca862310f5383d20b057da2991."
+    },
+    {
+      "bytes": 2774,
+      "path": "tools/aihoots_reference/src/verifier/cli.py",
+      "sha256": "a78eaa9be261ebe634ab099d1d919c94cc787d9d4ba7c7b4e94052feb9631894",
+      "what": "AIHOOTS's own audit-verify at commit 97cf8f5a6b0512ca862310f5383d20b057da2991."
+    },
+    {
+      "bytes": 4930,
+      "path": "tools/evidence_ops.py",
+      "sha256": "6fcb6f8aae90433a18876fdf6227db3868dbb672be57dad4c3135758455ed2cd",
+      "what": "The offline verifier, shipped so the bundle can be checked without this repository."
+    },
+    {
+      "bytes": 13322,
+      "path": "tools/jwks.py",
+      "sha256": "d5c91970c05b7f39bc13185109b012284de501fe6ac5d983bcc6aa32a47ecc67",
+      "what": "The offline verifier, shipped so the bundle can be checked without this repository."
+    },
+    {
+      "bytes": 3976,
+      "path": "tools/structure.py",
+      "sha256": "873107ced733f31319c5fad6082142d124883599fe8e2dc69cf853500a70e965",
+      "what": "The offline verifier, shipped so the bundle can be checked without this repository."
+    },
+    {
+      "bytes": 42616,
+      "path": "tools/verify_bundle.py",
+      "sha256": "99c76d0506e0c0002c09bf532bc67e564b4102da673ced7ad27cc4e68c853133",
+      "what": "The offline verifier, shipped so the bundle can be checked without this repository."
+    },
+    {
+      "bytes": 32,
+      "path": "vkey/vk_hash",
+      "sha256": "32180e59f4b50c39d83bf9f435cfeacef27bb2b407f5faf70e3838096f153a78",
+      "what": "Barretenberg's own 32-byte commitment to the key, as `bb write_vk` emitted it. This is NOT the SHA-256 of the vk file and `sha256sum` will not reproduce it."
+    },
+    {
+      "bytes": 3680,
+      "path": "vkey/wealth_suitability.vk",
+      "sha256": "8d4da2b382ee714cbbb9fba17c6fcfd49e88ac8e618614e449751d7a051e091a",
+      "what": "The committed, CI-pinned verification key for wealth_suitability."
+    }
+  ],
+  "independence_scope": "The cryptographic independence this bundle offers covers the `wealth_suitability` circuit and no other. That circuit's verification key is committed to the repository and CI fails if it drifts from a fresh build, so an examiner can check the proof without trusting Memtara's build pipeline. The other four circuits' verification keys are gitignored build artefacts regenerated at boot, and no equivalent guarantee exists for them. This is a property of one circuit, not of the system.",
+  "manifest_integrity": "This file lists every other file's SHA-256 and therefore cannot list its own. Its own integrity rests on MANIFEST.json.sig if one is present, and on nothing otherwise.",
+  "manifest_version": "1.0.0",
+  "pinned_dependencies": {
+    "aihoots_reference_verifier": {
+      "entrypoint": "python3 -m src.verifier.cli <audit_chain.jsonl>",
+      "name": "AIHOOTS audit-verify",
+      "note": "Vendored so the chain cross-check needs no git, no network and no submodule checkout. It is AIHOOTS's own code at the commit named above, not a reimplementation: a second hash-chain walker that agreed with the first would prove nothing, and one that disagreed would be indistinguishable from a bug.",
+      "pinned_commit": "97cf8f5a6b0512ca862310f5383d20b057da2991",
+      "source": "https://github.com/prasantk8/aihoots-e1-audit-gateway.git",
+      "vendored": true,
+      "vendored_path": "tools/aihoots_reference"
+    },
+    "bb": {
+      "install": "curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/bbup/install | bash && ~/.bb/bbup -v 5.1.0",
+      "name": "Barretenberg (bb)",
+      "observed_on_the_build_machine": "5.1.0",
+      "pinned_version": "5.1.0",
+      "vendored": false,
+      "verifier_target": "noir-recursive",
+      "why_not_vendored": "bb is a platform-specific binary from a public, open-source project that is not Memtara's. Shipping one architecture's build would make the bundle unusable on every other, and shipping a binary an auditor cannot rebuild would replace trust in Memtara with trust in whatever this tool copied.",
+      "why_the_target_matters": "-t noir-recursive selects the poseidon2 transcript and the ZK-preserving proving target. A key written with a different target verifies nothing this system produces."
+    },
+    "python": {
+      "minimum": "3.9",
+      "note": "Steps 1-4 and 6 run on a bare interpreter. Only the EdDSA check in step 5 needs `cryptography`; without it that step reports NOT RUN rather than PASS.",
+      "third_party_packages_required_by_the_verifier": [
+        "cryptography (step 5 only)"
+      ]
+    }
+  },
+  "produced_by": "scripts/bundle/build_bundle.py",
+  "provenance": "REAL: the proof, its 12 public inputs, the verification key, the AIHOOTS audit chain and the Ed25519 issuance token are genuine artefacts \u2014 the proof was produced by nargo 1.0.0-beta.26 and bb 5.1.0 against the committed wealth_suitability circuit, and bb verify accepts it. DEMONSTRATION DATA: the surrounding business record (firm, product registry entry, subject id, Memtara audit-chain rows, timestamps) was constructed offline because no Memtara deployment was running; it is not a real client or a real assessment. Do not present this bundle as evidence of an actual advice event.",
+  "request_id": "71386234-daae-4896-91fe-4c469cf59af2",
+  "two_verdicts": {
+    "decision_outcome_claimed_by_the_record": "NOT SUITABLE",
+    "decision_outcome_read_from_public_input_11": "NOT SUITABLE",
+    "note": "These are two findings, not one. Evidence integrity asks whether this pack is the bytes that were sealed. Decision outcome asks what the circuit answered. A valid proof of NOT SUITABLE is a correctly formed rejection with perfect integrity; anything that reported it as a single PASS would be reporting a decline as an approval.",
+    "the_two_agree": true
+  }
+}

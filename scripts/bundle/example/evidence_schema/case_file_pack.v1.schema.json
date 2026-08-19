@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memtara.example/schema/case_file_pack/v1.0.0",
+  "title": "Memtara Canonical Case File pack, v1",
+  "description": "The structure of decision_evidence.json inside an offline verification bundle. This is the projection `build_pack()` in scripts/export_audit_evidence.py copies out of the wealth-assessment evidence endpoint, serialised canonically (sorted keys, no insignificant whitespace) and hashed into the seal's canonical_evidence_sha256. NOTE ON SCOPE: this is the *pack* schema that exists today, not the DecisionEvidence v1 schema specified in the board response. It has no model.*, no human_review.*, no consent.* and no policy_version, because the system does not record them. A schema that declared those fields would describe a record this codebase cannot produce.",
+  "x_schema_version": "1.0.0",
+  "x_produced_by": "scripts/export_audit_evidence.py::build_pack",
+  "x_every_key_is_required": "Deliberate. A rejected assessment must produce the same shape as an approved one: `suitable` is a tri-state value (true/false/null), never an absent key. Optional fields that vanish on a decline would change the canonical byte layout, which is itself a detectable defect.",
+  "type": "object",
+  "required": [
+    "request_id",
+    "circuit",
+    "status",
+    "opened_at",
+    "organisation",
+    "subject",
+    "product",
+    "terms_assessed_against",
+    "window",
+    "outcome",
+    "nonce",
+    "verification_key",
+    "proofs",
+    "audit_chain_excerpt",
+    "regulatory_mapping",
+    "aihoots",
+    "proof_token"
+  ],
+  "properties": {
+    "request_id": { "type": "string" },
+    "circuit": { "type": "string" },
+    "status": { "type": "string" },
+    "opened_at": { "type": "string" },
+    "nonce": { "type": "string" },
+    "organisation": {
+      "type": "object",
+      "required": ["id", "name", "type"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "required": ["user_id", "disclosed_attributes", "note"],
+      "properties": {
+        "user_id": { "type": "string" },
+        "disclosed_attributes": { "type": "array", "items": { "type": "string" } },
+        "note": { "type": "string" }
+      }
+    },
+    "product": {
+      "type": "object",
+      "required": ["id", "isin", "name", "product_ref"],
+      "properties": {
+        "id": { "type": "string" },
+        "isin": { "type": "string" },
+        "name": { "type": "string" },
+        "product_ref": { "type": "string" }
+      }
+    },
+    "terms_assessed_against": {
+      "type": "object",
+      "description": "The firm's thresholds, snapshotted when the assessment was opened. These are public inputs 4-7 and they are the firm's, not the client's.",
+      "required": [
+        "min_income",
+        "min_liquidity",
+        "max_concentration_percent",
+        "product_risk_level",
+        "source"
+      ],
+      "properties": {
+        "min_income": { "type": ["integer", "null"] },
+        "min_liquidity": { "type": ["integer", "null"] },
+        "max_concentration_percent": { "type": ["integer", "null"] },
+        "product_risk_level": { "type": ["integer", "null"] },
+        "source": { "type": "string" }
+      }
+    },
+    "window": {
+      "type": "object",
+      "required": ["start", "end", "expires_at"],
+      "properties": {
+        "start": { "type": "string" },
+        "end": { "type": "string" },
+        "expires_at": { "type": "string" }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "description": "The decision. `suitable` is read from public input 11, the circuit's return value. It is NOT the exit code of `bb verify`.",
+      "required": ["assessed", "suitable", "assessed_at", "read_from", "note"],
+      "properties": {
+        "assessed": { "type": "boolean" },
+        "suitable": {
+          "type": ["boolean", "null"],
+          "description": "true = suitable, false = not suitable, null = never assessed. Three distinct facts; null must never be read as a decline."
+        },
+        "assessed_at": { "type": "string" },
+        "read_from": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "verification_key": {
+      "type": "object",
+      "required": ["sha256", "bytes", "verifier_target", "published_at", "note"],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "description": "SHA-256 over the vk file's bytes, as computed by the server that used it. This is NOT the value in circuits/wealth_suitability/vkey/vk_hash, which is Barretenberg's own field-element commitment to the key."
+        },
+        "bytes": { "type": ["integer", "null"] },
+        "verifier_target": { "type": "string" },
+        "published_at": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "proofs": {
+      "type": "array",
+      "description": "Every submission, accepted and rejected alike.",
+      "items": {
+        "type": "object",
+        "required": [
+          "proof_id",
+          "accepted_by_bb_verify",
+          "verified_at",
+          "proof_bytes",
+          "proof_sha256",
+          "public_inputs"
+        ],
+        "properties": {
+          "proof_id": { "type": "string" },
+          "accepted_by_bb_verify": { "type": "boolean" },
+          "verified_at": { "type": "string" },
+          "proof_bytes": {
+            "type": ["integer", "null"],
+            "description": "The LENGTH of the proof in bytes, not the proof. The evidence endpoint returns a count (wealth/evidence.rs: `p.proof_bytes.len()`); the proof itself must be supplied separately and is checked against proof_sha256."
+          },
+          "proof_sha256": { "type": "string" },
+          "public_inputs": {
+            "type": "array",
+            "description": "12 field elements as 0x-prefixed hex, in circuit order. Index 11 is the verdict.",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "audit_chain_excerpt": {
+      "type": "array",
+      "description": "This request's own events from Memtara's global hash chain. `seq` values are not expected to be consecutive: the chain is global across tenants, so other assessments were interleaved.",
+      "items": {
+        "type": "object",
+        "required": ["seq", "event_type", "event_hash", "prev_hash", "created_at"],
+        "properties": {
+          "seq": { "type": ["integer", "null"] },
+          "event_type": { "type": "string" },
+          "event_hash": { "type": "string" },
+          "prev_hash": { "type": "string" },
+          "created_at": { "type": "string" }
+        }
+      }
+    },
+    "regulatory_mapping": {
+      "type": "object",
+      "required": ["dfsa_claim_values", "dfsa_correct_citation", "cbuae"],
+      "properties": {
+        "dfsa_claim_values": { "type": "array", "items": { "type": "string" } },
+        "dfsa_correct_citation": { "type": "string" },
+        "cbuae": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "aihoots": {
+      "type": "object",
+      "required": ["supplied"],
+      "properties": { "supplied": { "type": "boolean" } }
+    },
+    "proof_token": {
+      "type": "object",
+      "description": "The Memtara-issued JWT, if the firm kept it. The server does not retain it.",
+      "required": ["supplied"],
+      "properties": {
+        "supplied": { "type": "boolean" },
+        "token": { "type": "string" },
+        "header": { "type": "object" },
+        "claims": { "type": "object" },
+        "signature_bytes": { "type": "integer" },
+        "verified_by_this_exporter": { "type": "boolean" }
+      }
+    }
+  }
+}

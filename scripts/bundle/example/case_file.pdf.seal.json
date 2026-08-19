@@ -1,0 +1,16 @@
+{
+  "authentication": "UNSIGNED. Tamper-evident by digest, unauthenticated as to origin. No ephemeral key was generated: a signature verifying against a key nobody holds is worse than none, because it looks like one that means something.",
+  "canonical_evidence_sha256": "32740f0be3df9377263d3300fe7419d1f187164e0d3263b9e3a92e1dea7ad261",
+  "created_at": "2026-08-19T09:23:31Z",
+  "pdf": {
+    "bytes": 48268,
+    "filename": "case_file.pdf",
+    "sha256": "5bae21eb4df614c6c3edc4daefc41dde736cc3fc1c8173663a1fdf3ef07b1269"
+  },
+  "request_id": "71386234-daae-4896-91fe-4c469cf59af2",
+  "seal_version": 1,
+  "signature": null,
+  "tool": "scripts/export_audit_evidence.py",
+  "tool_version": "1.0.0",
+  "what_this_is_not": "Not a PAdES/AdES signature and not embedded in the PDF; no viewer will show a signature panel for it. The strongest authenticity claim in the pack is the Memtara-issued JWT verifiable against the issuer's published JWKS, not this seal."
+}

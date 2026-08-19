@@ -79,6 +79,11 @@ from scripts.export_audit_evidence import (
 
 BUILDER_NAME = "scripts/bundle/build_bundle.py"
 
+# The reserved name for the signed chain-head checkpoint. Fixed here, and in
+# verify_bundle.py's step 7c, so that the engineer who lands the checkpoint has
+# one filename to produce rather than a format to negotiate.
+CHECKPOINT_FILENAME = "audit_chain_checkpoint.json"
+
 DEFAULT_VKEY_DIR = REPO_ROOT / "circuits" / "wealth_suitability" / "vkey"
 SCHEMA_SOURCE = Path(__file__).resolve().parent / "schema" / "case_file_pack.v1.schema.json"
 VERIFY_DOC_SOURCE = REPO_ROOT / "docs" / "VERIFY.md"
@@ -228,9 +233,11 @@ def build_bundle(
     vkey_dir: Path = DEFAULT_VKEY_DIR,
     proof_path: Path | None = None,
     aihoots_audit_path: Path | None = None,
+    checkpoint_path: Path | None = None,
     vendor_aihoots: bool = True,
     bb_version_pin: str = DEFAULT_BB_VERSION,
     signing_key: Any = None,
+    provenance: str | None = None,
     created_at: datetime | None = None,
 ) -> dict:
     """Write the bundle and return a summary. Raises BuildError on anything unverifiable."""
@@ -385,6 +392,43 @@ def build_bundle(
         "The institution metadata and the thresholds this assessment was measured against.",
     )
 
+    # --- the chain-head checkpoint, when there is one to carry ---------------
+    # RESERVED SLOT — wire-in point for the signed chain-head checkpoint being
+    # built separately (see docs/BREAK_IT_FINDINGS.md: the terminal row of the
+    # chain is unprotected, because nothing commits to its event_hash and the
+    # payload is not stored, so it cannot be recomputed). When that lands, a
+    # builder passes `checkpoint_path` and everything downstream already
+    # exists: step 7c in verify_bundle.py, the `absent` entry below, and the
+    # VERIFY.md text. Nothing else has to change.
+    if checkpoint_path is not None:
+        checkpoint_path = Path(checkpoint_path)
+        if not checkpoint_path.exists():
+            raise BuildError(f"--chain-checkpoint: no such file: {checkpoint_path}")
+        record(
+            CHECKPOINT_FILENAME,
+            checkpoint_path.read_bytes(),
+            (
+                "A signed commitment to the position of the chain head at a point in time. "
+                "It is what closes the terminal-row gap: without it, the newest record in any "
+                "segment is protected by nothing, because protection comes from being followed."
+            ),
+        )
+    else:
+        absent.append(
+            {
+                "path": CHECKPOINT_FILENAME,
+                "reason": (
+                    "No signed chain-head checkpoint exists yet in this deployment. A hash "
+                    "chain protects every record that has been FOLLOWED by another record; the "
+                    "last row in the chain is committed to by nothing, and Memtara's log "
+                    "stores no payload column, so it cannot be recomputed either. Until a "
+                    "published checkpoint exists, treat the most recent event in "
+                    "audit_chain_segment.jsonl as unprotected. See VERIFY.md step 7."
+                ),
+                "status": "reserved — a builder given --chain-checkpoint will populate this",
+            }
+        )
+
     if aihoots_audit_path is not None:
         aihoots_path = Path(aihoots_audit_path)
         if not aihoots_path.exists():
@@ -504,6 +548,17 @@ def build_bundle(
         "request_id": pack.get("request_id"),
         "circuit": pack.get("circuit"),
         "canonical_evidence_sha256": canonical_sha256,
+        # Where these bytes came from, in the builder's own words. Printed at
+        # the top of every verification report. A bundle assembled from
+        # demonstration data and one exported from a live assessment are
+        # indistinguishable by inspection — they have the same files, the same
+        # digests and the same real cryptography — so the difference has to be
+        # stated, prominently, by whoever built it.
+        "provenance": provenance
+        or (
+            "Not stated by the builder. Ask whoever supplied this bundle whether the business "
+            "record it contains came from a live assessment or from demonstration data."
+        ),
         "files": sorted(files, key=lambda entry: entry["path"]),
         "absent": absent,
         "pinned_dependencies": pinned_dependencies(
@@ -614,6 +669,18 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not fetch the key set; build without one and record it as absent",
     )
+    extra.add_argument(
+        "--chain-checkpoint",
+        type=Path,
+        help=f"a signed chain-head checkpoint, written into the bundle as {CHECKPOINT_FILENAME}. "
+        "Reserved: no deployment produces one yet. Until it does, the newest event in the "
+        "audit segment is protected by nothing.",
+    )
+    extra.add_argument(
+        "--provenance",
+        help="one sentence on where this bundle's business record came from. Printed at the "
+        "top of every verification report. Say plainly if any of it is demonstration data.",
+    )
     extra.add_argument("--vkey-dir", type=Path, default=DEFAULT_VKEY_DIR)
     extra.add_argument("--bb-version", default=DEFAULT_BB_VERSION)
     extra.add_argument(
@@ -675,8 +742,10 @@ def main(argv: list[str] | None = None) -> int:
             vkey_dir=args.vkey_dir,
             proof_path=args.proof_file,
             aihoots_audit_path=args.aihoots_audit,
+            checkpoint_path=args.chain_checkpoint,
             bb_version_pin=args.bb_version,
             signing_key=signing_key,
+            provenance=args.provenance,
         )
         shutil.rmtree(staging, ignore_errors=True)
     except (BuildError, ExportError, OSError, ValueError) as exc:
