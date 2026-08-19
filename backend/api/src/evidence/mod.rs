@@ -1,12 +1,16 @@
 // DecisionEvidence — the record a regulator reads when nobody from Memtara
 // is in the room.
 //
-// INTEGRATED as of schema 1.1.0. `wealth/evidence.rs::build_decision_evidence`
-// is the single construction site; `GET /api/v1/wealth-assessments/:id/
-// decision-evidence` serves it and `POST .../review` returns it. The note
-// that used to stand here — "nothing in this module is wired into a route
-// yet" — is no longer true, and the model and human_review blocks now carry
-// captured values rather than placeholders.
+// INTEGRATED as of schema 1.1.0, at 1.2.0 as of this build.
+// `wealth/evidence.rs::build_decision_evidence` is the single construction
+// site; `GET /api/v1/wealth-assessments/:id/decision-evidence` serves it and
+// `POST .../review` returns it. The note that used to stand here — "nothing in
+// this module is wired into a route yet" — is no longer true, and the model
+// and human_review blocks now carry captured values rather than placeholders.
+//
+// 1.2.0 added `model_provenance`, which is where the model block stopped
+// being a single un-rechecked forward declaration. Read that type's header
+// before changing anything about `model`.
 //
 // -------------------------------------------------------------------
 // WHY THE ALLOW IS STILL HERE, HONESTLY
@@ -47,7 +51,7 @@ pub use provenance::{FieldState, Provenanced};
 
 /// The version of *this* schema. It is written into every record, inside the
 /// signed payload (see `DecisionEvidence::evidence_schema_version`), and it
-/// is the key an examiner uses to find `schema/decision_evidence/v1.1.0.json`
+/// is the key an examiner uses to find `schema/decision_evidence/v1.2.0.json`
 /// in the repo at the matching tag.
 ///
 /// Bumping this is not a code change on its own. A new value requires a new
@@ -77,17 +81,76 @@ pub use provenance::{FieldState, Provenanced};
 /// v1.0.0 key survives with its meaning intact, so a reader written for
 /// 1.0.0 that ignores unknown keys still reads a 1.1.0 record correctly.
 /// Nothing was removed, renamed, or re-constrained.
-pub const EVIDENCE_SCHEMA_VERSION: &str = "1.1.0";
+///
+/// -------------------------------------------------------------------
+/// 1.1.0 -> 1.2.0: WHY
+/// -------------------------------------------------------------------
+/// The record gained one top-level key, `model_provenance`, and `model`
+/// gained a second possible source.
+///
+/// The defect. `decision_model_attestations` is written in the same
+/// transaction as the assessment, by `POST /api/v1/issue-wealth-request` —
+/// before the client's device has proved anything, before a verdict exists
+/// and before any human has reviewed it. Under 1.1.0 the record served that
+/// forward declaration with every leaf `state: "recorded"`, which is the same
+/// provenance a fact observed at decision time carries, and carried nothing
+/// saying when the declaration was made or whether anything had since
+/// contradicted it. `tests/break_it/test_attack_11_swap_model_undetected.py`
+/// demonstrates the consequence against a running server: the model that
+/// actually served the recommendation changes, no recorded field changes with
+/// it, and the record reads as internally consistent and wrong.
+///
+/// `model_provenance` carries `declared_at` — so an examiner can compare it
+/// against `decision.timestamps.assessed_at` and see for themselves that the
+/// attestation predates the decision — the declaration as made at open,
+/// verbatim and never altered, and the append-only corrections filed against
+/// it through `POST /api/v1/wealth-assessments/{id}/model-corrections`.
+///
+/// WHY `model` NOW SERVES THE CORRECTED IDENTITY, AND WHY THAT IS STILL
+/// ADDITIVE. The alternative was to leave `model` pinned to the original and
+/// put the correction only in the new block. That was rejected: a reader who
+/// looks at `model.provider` — which is every reader, and every tool written
+/// against 1.1.0 — would get an identity the organisation has since said was
+/// wrong, and would get it labelled `recorded`. The record would still lie,
+/// with a footnote. So `model` means what it always meant, "which AI system
+/// participated in this decision, as this organisation states it", and a
+/// correction changes the answer rather than annotating it.
+///
+/// That is not a semantic break, and the reason is arithmetic: no record
+/// written under 1.1.0 can have a correction, because the table did not
+/// exist. For every 1.1.0-era record the original and the effective identity
+/// are the same value, so nothing already sealed changes meaning or bytes. A
+/// 1.1.0 reader pointed at a 1.2.0 record gets the organisation's current
+/// best statement of which model ran, which is more correct than the original,
+/// not less.
+///
+/// WHAT DID NOT CHANGE. `model: null` is still a signed assertion that no AI
+/// participated, and it is now a slightly stronger one: a correction can never
+/// assert `no_ai_participated` (migrations/0009 forbids it and
+/// `model_correction.rs` refuses it with a 400), so `model: null` means the
+/// declaration made at open said no AI took part AND nothing has since said
+/// otherwise. An AI whose identity is unknown is still an object with
+/// `unpopulated` leaves and still hashes differently.
+///
+/// Minor rather than major because every 1.1.0 key survives with its meaning
+/// intact and nothing was removed, renamed or re-constrained. It is a new
+/// file rather than an edit for the same reason 1.1.0 was: v1.1.0.json sets
+/// `additionalProperties: false` at the top level, so a 1.2.0 record is not a
+/// valid 1.1.0 record and must not claim to be one.
+pub const EVIDENCE_SCHEMA_VERSION: &str = "1.2.0";
 
 // =====================================================================
 // The record
 // =====================================================================
 
 /// One decision, in the shape an offline auditor validates against
-/// `schema/decision_evidence/v1.0.0.json`.
+/// `schema/decision_evidence/v{EVIDENCE_SCHEMA_VERSION}.json` — v1.2.0 as of
+/// this build, with every superseded file still on disk beside it because a
+/// record sealed under one of them validates against it and against nothing
+/// else.
 ///
 /// -------------------------------------------------------------------
-/// THREE INVARIANTS THIS TYPE ENFORCES STRUCTURALLY
+/// FOUR INVARIANTS THIS TYPE ENFORCES STRUCTURALLY
 /// -------------------------------------------------------------------
 /// 1. REJECTION SYMMETRY. No field anywhere below is `Option<T>` because
 ///    the decision went against the client. `human_review.action` and
@@ -109,6 +172,16 @@ pub const EVIDENCE_SCHEMA_VERSION: &str = "1.1.0";
 ///    idea pushed down to the object that actually gets signed.
 ///
 /// 3. `model: null` IS AN ASSERTION, NOT A GAP. See `ModelAttestation`.
+///
+/// 4. WHAT `model` SAYS TODAY AND WHAT WAS DECLARED AT OPEN ARE BOTH IN THE
+///    RECORD, AND NEITHER CAN BE ABSENT. `model_provenance` is a required
+///    field, so "nobody has contradicted this attestation" is a claim the
+///    record makes explicitly rather than one a reader infers from a missing
+///    block — and the declaration made when the assessment was opened is
+///    preserved verbatim under it, so a correction adds a statement and never
+///    erases one. New in 1.2.0; see `ModelProvenance` for why it exists and
+///    `tests/break_it/test_attack_11_swap_model_undetected.py` for what it
+///    costs not to have it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionEvidence {
@@ -118,9 +191,18 @@ pub struct DecisionEvidence {
     pub decision: DecisionBlock,
     pub policy: PolicyBlock,
     pub data: DataBlock,
-    /// `null` here is a signed assertion that no AI system participated.
-    /// It is never "we did not record it". See `ModelAttestation`.
+    /// Which AI system participated, as this organisation states it TODAY.
+    ///
+    /// `null` here is a signed assertion that no AI system participated. It
+    /// is never "we did not record it". See `ModelAttestation`.
+    ///
+    /// Since 1.2.0 this is the declaration made at open time only until a
+    /// correction contradicts it; `model_provenance` beside it says which,
+    /// and preserves what was declared at open unaltered.
     pub model: ModelAttestation,
+    /// How the block above came to say what it says: when the declaration was
+    /// made, what it said at the time, and every correction filed against it.
+    pub model_provenance: ModelProvenance,
     pub human_review: HumanReviewBlock,
     pub evidence: EvidenceBlock,
 }
@@ -468,6 +550,247 @@ impl ModelIdentity {
 }
 
 // ---------------------------------------------------------------------
+// model_provenance
+// ---------------------------------------------------------------------
+
+/// Where the `model` block's contents came from, and what they replaced.
+///
+/// -------------------------------------------------------------------
+/// WHY THIS BLOCK EXISTS
+/// -------------------------------------------------------------------
+/// The model attestation is written when the assessment is OPENED, in the
+/// same transaction — before the client's device has proved anything, before
+/// a verdict exists, before any human review. Up to schema 1.1.0 the record
+/// served that forward declaration with every leaf `state: "recorded"`, which
+/// is the provenance a fact observed at decision time carries, and said
+/// nothing at all about when the declaration was made or whether anything had
+/// since contradicted it. `tests/break_it/test_attack_11_swap_model_undetected.py`
+/// demonstrates what that costs: the model that served the recommendation
+/// changes, no recorded field changes with it, and the record reads as
+/// internally consistent and wrong.
+///
+/// Every field here answers one of the two questions that record could not:
+/// *when was this said*, and *has anyone said otherwise since*.
+///
+/// -------------------------------------------------------------------
+/// WHY THE ORIGINAL IS CARRIED HERE RATHER THAN LEFT IN `model`
+/// -------------------------------------------------------------------
+/// A correction changes what `model` says, because a reader who looks only at
+/// `model.provider` — which is every reader — must not be handed an identity
+/// the organisation has retracted. But the declaration made at open is still
+/// evidence, and it is evidence of a different thing: not which model ran,
+/// but what this organisation asserted before it knew how the decision would
+/// turn out. That is a fact about the organisation, it is often the more
+/// interesting of the two, and it is exactly what a firm would want to lose.
+/// So it is preserved verbatim, in the signed bytes, beside the correction
+/// that supersedes it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelProvenance {
+    /// When the declaration was recorded, on the server's clock —
+    /// `decision_model_attestations.created_at`.
+    ///
+    /// The single most useful field in this block, because it is the one an
+    /// examiner compares against `decision.timestamps.assessed_at` without
+    /// being told to. Deliberately NOT accompanied by a derived
+    /// `declared_before_the_decision` boolean: both timestamps are in this
+    /// record, the comparison is the reader's to make, and a derived flag is
+    /// one more thing that can disagree with its own inputs.
+    ///
+    /// `Provenanced` rather than a bare timestamp because a decision opened
+    /// before migrations/0006 has no attestation row and therefore no
+    /// declaration time, and writing one would invent a fact.
+    pub declared_at: Provenanced<DateTime<Utc>>,
+    /// The declaration exactly as it was made when the assessment was opened.
+    /// Never altered by anything, including this system.
+    pub as_declared_at_open: DeclaredAttestation,
+    /// Whether anything in `corrections` contradicts it. Derived from the
+    /// vector by `ModelProvenance::new`, so it cannot disagree with it.
+    pub corrected: bool,
+    /// How many corrections this decision carries.
+    ///
+    /// Redundant with `corrections.len()` on purpose, and the redundancy is
+    /// the point: `correction_no` is dense from 1, so a reader comparing this
+    /// count against the highest `correction_no` present sees a removed row
+    /// as a mismatch. Two corrections numbered 1 and 3 is a deletion; two
+    /// numbered 1 and 2 is not.
+    pub correction_count: i64,
+    /// Every correction, oldest first. Append-only: a later correction never
+    /// edits or removes an earlier one, because an organisation that has
+    /// corrected twice has said two things and an examiner is entitled to
+    /// both.
+    pub corrections: Vec<ModelCorrection>,
+    /// Human-readable restatement, for the examiner who reads the PDF and not
+    /// the JSON — the same reason `data_provenance.statement` exists.
+    pub statement: String,
+}
+
+/// The declaration as made at open, or one correction's replacement for it.
+///
+/// Plain `Option`s rather than `Provenanced` leaves, and the difference from
+/// `ModelIdentity` is deliberate. `ModelIdentity` describes what the record
+/// currently asserts, where a missing leaf is a gap that needs a stated
+/// reason. This describes a statement that was made: a leaf the declaring
+/// system did not supply is simply not part of the statement, and wrapping it
+/// in "unpopulated, and here is what would fill it" would attach a
+/// forward-looking remedy to a historical document. The same reasoning that
+/// makes `EvidenceArtifact` and `CryptographicProof` plain structs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeclaredAttestation {
+    /// `no_ai_participated` | `model_identified` |
+    /// `participated_but_unidentified`. A string rather than an enum for the
+    /// same reason `Institution::org_type` is one: an evidence reader must
+    /// not fail closed on a declaration added after this schema was pinned.
+    pub declaration: String,
+    /// Only ever set under `no_ai_participated`: what the organisation
+    /// asserted decided instead. Null, never absent.
+    pub no_ai_attestation: Option<String>,
+    /// Only ever set under `participated_but_unidentified`: why the model
+    /// could not be named.
+    pub unidentified_reason: Option<String>,
+    /// Always present as an object, whatever the declaration, with null
+    /// leaves where the declaration carries none.
+    ///
+    /// An object with eight nulls rather than `identity: null`, because
+    /// `null` under a model-shaped key already means something specific in
+    /// this record — a signed assertion that no AI participated — and a second
+    /// null meaning "this branch has no identity" one level down is exactly
+    /// the ambiguity `ModelAttestation` exists to prevent.
+    pub identity: DeclaredIdentity,
+}
+
+/// The eight model leaves as stated, with nothing inferred.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeclaredIdentity {
+    pub provider: Option<String>,
+    pub model_name: Option<String>,
+    pub model_version: Option<String>,
+    pub prompt_version: Option<String>,
+    pub environment: Option<String>,
+    pub config_fingerprint: Option<String>,
+    pub system_prompt_or_policy_id: Option<String>,
+    pub timestamp: Option<DateTime<Utc>>,
+}
+
+impl DeclaredIdentity {
+    /// No leaves stated. Used for the two declarations that carry none — and
+    /// a constructor rather than `Default` so that "the caller named nothing"
+    /// is always a decision somebody made in code, never a struct literal
+    /// somebody forgot to fill in.
+    pub fn none_stated() -> Self {
+        Self {
+            provider: None,
+            model_name: None,
+            model_version: None,
+            prompt_version: None,
+            environment: None,
+            config_fingerprint: None,
+            system_prompt_or_policy_id: None,
+            timestamp: None,
+        }
+    }
+}
+
+/// One correction to the declaration, as filed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelCorrection {
+    /// The row's own id, and the `audit_log.ref_id` the chain committed to
+    /// this correction under (`audit/binding.rs`). Carried in the record so
+    /// the join runs in both directions: a reader holding this record can
+    /// find the binding event for a specific correction in a replay report,
+    /// and a reader holding the report can find the decision from the
+    /// payload's `request_id`. Without it the cross-check only works one way.
+    pub correction_id: Uuid,
+    /// Dense from 1 per decision. A gap means a correction was removed from
+    /// the database after it was filed — which the chain also catches, as a
+    /// `source_row_missing` result on
+    /// `GET /orgs/:id/audit-log/replay`.
+    pub correction_no: i32,
+    /// The organisation's own identifier for whoever asserted it, and the
+    /// authority they asserted it under. Text, quoted rather than resolved:
+    /// Memtara has no directory of a bank's staff.
+    pub asserted_by: String,
+    pub asserted_by_role: String,
+    /// Why. Substantive by constraint — at least
+    /// `model_correction::MIN_CORRECTION_REASON_CHARS` characters, enforced in
+    /// the handler and again by `decision_model_corrections_reason_is_substantive`
+    /// in migrations/0009.
+    pub correction_reason: String,
+    /// When the organisation says it determined the correction.
+    pub asserted_at: DateTime<Utc>,
+    /// When this server observed it. Beside the claim rather than instead of
+    /// it: the gap between the two is the only unforgeable thing about the
+    /// first, and a batch of corrections all claiming to be weeks apart while
+    /// arriving in one second is visible from these two fields alone.
+    pub recorded_at: DateTime<Utc>,
+    /// `model_identified` | `participated_but_unidentified`. Never
+    /// `no_ai_participated`: a correction may weaken or re-point an
+    /// organisation's AI claim and may never strengthen it into the strongest
+    /// assertion the system can make. migrations/0009 carries the argument.
+    pub declaration: String,
+    pub unidentified_reason: Option<String>,
+    pub identity: DeclaredIdentity,
+}
+
+/// The prose an examiner reads instead of this module.
+const MODEL_PROVENANCE_STATEMENT: &str =
+    "The model block in this record is what this organisation asserts about the AI system that \
+     participated in this decision. The declaration it made when the assessment was opened is \
+     preserved here under as_declared_at_open and is never altered by anything, including a \
+     correction. Note when that declaration is made: at open, in the same transaction as the \
+     assessment, before the subject's device has produced a proof, before a verdict exists and \
+     before any human review — so it is a statement about a decision that has not happened yet. \
+     Compare declared_at with decision.timestamps.assessed_at. Corrections are append-only and \
+     numbered from 1; a gap in correction_no means a correction was removed from the database \
+     after it was filed, and each one is separately committed to the audit chain.";
+
+impl ModelProvenance {
+    /// The one constructor. `corrected` and `correction_count` are derived
+    /// from `corrections` here rather than passed in, so no call site can
+    /// produce a record that says it was never corrected while carrying a
+    /// correction.
+    pub fn new(
+        declared_at: Provenanced<DateTime<Utc>>,
+        as_declared_at_open: DeclaredAttestation,
+        corrections: Vec<ModelCorrection>,
+    ) -> Self {
+        Self {
+            declared_at,
+            as_declared_at_open,
+            corrected: !corrections.is_empty(),
+            correction_count: corrections.len() as i64,
+            corrections,
+            statement: MODEL_PROVENANCE_STATEMENT.to_string(),
+        }
+    }
+
+    /// The provenance of a decision that has no attestation row at all.
+    ///
+    /// Not `no_ai_participated`, for the same reason
+    /// `model_intake::absent_attestation` is not: an assessment opened before
+    /// the capture path existed was opened by a system that was never asked
+    /// the question, and a record claiming it involved no AI would assert
+    /// something nobody established. There is nothing to correct either, which
+    /// is why `model_correction.rs` answers 409 rather than creating a
+    /// declaration on the organisation's behalf.
+    pub fn never_declared(reason: &str) -> Self {
+        Self::new(
+            Provenanced::unpopulated(reason),
+            DeclaredAttestation {
+                declaration: "participated_but_unidentified".to_string(),
+                no_ai_attestation: None,
+                unidentified_reason: Some(reason.to_string()),
+                identity: DeclaredIdentity::none_stated(),
+            },
+            vec![],
+        )
+    }
+}
+
+// ---------------------------------------------------------------------
 // human_review
 // ---------------------------------------------------------------------
 
@@ -700,6 +1023,11 @@ pub struct DecisionInputs {
     pub threshold_values: BTreeMap<String, Value>,
     pub regulatory_control_mapping: Vec<RegulatoryControl>,
     pub model: ModelAttestation,
+    /// How `model` came to say what it says. Required rather than defaulted:
+    /// a caller that has not thought about whether this decision's
+    /// attestation was ever corrected must not be able to produce a record
+    /// that silently asserts it was not.
+    pub model_provenance: ModelProvenance,
     pub human_review: HumanReviewInputs,
     pub evidence_artifacts: Vec<EvidenceArtifact>,
     pub cryptographic_proofs: Vec<CryptographicProof>,
@@ -835,8 +1163,8 @@ const NO_DURATION: &str = "the reviewing client did not report how long the revi
 /// carries. Kept as one constant so a reader grepping a sealed record finds
 /// every gap at once, and so no caller can invent a softer phrasing.
 const NO_SOURCE: &str =
-    "no source exists in memtara-api as of evidence schema 1.1.0; see \
-     schema/decision_evidence/v1.1.0.json for what would populate it";
+    "no source exists in memtara-api as of evidence schema 1.2.0; see \
+     schema/decision_evidence/v1.2.0.json for what would populate it";
 
 impl DecisionEvidence {
     /// Build a record, filling every field the codebase cannot yet source
@@ -899,6 +1227,7 @@ impl DecisionEvidence {
                 data_schema_version: Provenanced::unpopulated(NO_SOURCE),
             },
             model: input.model,
+            model_provenance: input.model_provenance,
             human_review: HumanReviewBlock {
                 performed: input.human_review.performed,
                 reviewer_id: input.human_review.reviewer_id,
@@ -1010,6 +1339,77 @@ mod tests {
         model: ModelAttestation,
         review: HumanReviewInputs,
     ) -> DecisionEvidence {
+        fixture_with_provenance(status, outcome, model, review, uncorrected())
+    }
+
+    /// The declaration the fixture's `model` block corresponds to: the same
+    /// signed assertion that no AI participated, in the shape
+    /// `model_provenance` records it. Kept in step with `approval()` on
+    /// purpose — a fixture whose `model` and `as_declared_at_open` disagreed
+    /// would be testing a record no builder can produce.
+    fn declared_no_ai() -> DeclaredAttestation {
+        DeclaredAttestation {
+            declaration: "no_ai_participated".to_string(),
+            no_ai_attestation: Some(
+                "suitability produced by the deterministic rules engine; no model in the \
+                 recommendation path"
+                    .to_string(),
+            ),
+            unidentified_reason: None,
+            identity: DeclaredIdentity::none_stated(),
+        }
+    }
+
+    fn uncorrected() -> ModelProvenance {
+        ModelProvenance::new(
+            Provenanced::recorded(ts("2026-08-18T17:59:00Z")),
+            declared_no_ai(),
+            vec![],
+        )
+    }
+
+    /// The same decision after the organisation named a model it had
+    /// declared no AI for. One correction, fully populated, so the corrected
+    /// branch of every shape assertion is exercised against real values
+    /// rather than against nulls.
+    fn corrected() -> ModelProvenance {
+        ModelProvenance::new(
+            Provenanced::recorded(ts("2026-08-18T17:59:00Z")),
+            declared_no_ai(),
+            vec![ModelCorrection {
+                correction_id: uuid("6f0f2b8c-3f4a-4d2b-8a1e-5c9d7e3b1a02"),
+                correction_no: 1,
+                asserted_by: "mrm-desk-11".to_string(),
+                asserted_by_role: "model_risk_officer".to_string(),
+                correction_reason: "an inference-log reconciliation shows a model was in the \
+                                    recommendation path for this desk in the period covering \
+                                    this decision"
+                    .to_string(),
+                asserted_at: ts("2026-09-02T09:15:00Z"),
+                recorded_at: ts("2026-09-02T09:15:04Z"),
+                declaration: "model_identified".to_string(),
+                unidentified_reason: None,
+                identity: DeclaredIdentity {
+                    provider: Some("anthropic".to_string()),
+                    model_name: Some("claude-opus-4".to_string()),
+                    model_version: Some("20260514".to_string()),
+                    prompt_version: Some("suitability-v7".to_string()),
+                    environment: Some("production".to_string()),
+                    config_fingerprint: Some("ab".repeat(32)),
+                    system_prompt_or_policy_id: Some("policy/suitability/7".to_string()),
+                    timestamp: Some(ts("2026-08-18T17:58:41Z")),
+                },
+            }],
+        )
+    }
+
+    fn fixture_with_provenance(
+        status: DecisionAction,
+        outcome: DecisionOutcome,
+        model: ModelAttestation,
+        review: HumanReviewInputs,
+        model_provenance: ModelProvenance,
+    ) -> DecisionEvidence {
         let mut values = BTreeMap::new();
         values.insert("min_income".to_string(), Value::from(500_000i64));
         values.insert("min_liquidity".to_string(), Value::from(250_000i64));
@@ -1049,6 +1449,7 @@ mod tests {
                 },
             ],
             model,
+            model_provenance,
             human_review: review,
             business_process: Provenanced::unpopulated(NO_SOURCE),
             decision_basis: Provenanced::unpopulated(NO_SOURCE),
@@ -1227,7 +1628,7 @@ mod tests {
         );
 
         // Present in the bytes the digest is taken over.
-        assert!(text.contains(r#""evidence_schema_version":"1.1.0""#));
+        assert!(text.contains(r#""evidence_schema_version":"1.2.0""#));
 
         // The pinned file for this version exists. A record naming a schema
         // nobody can open is a record an examiner cannot check, and the
@@ -1242,14 +1643,19 @@ mod tests {
             pinned.display()
         );
 
-        // v1.0.0 is immutable and stays on disk beside it. Records sealed
-        // under it are still readable, which is the whole reason a bump is a
-        // new file rather than an edit.
-        assert!(pinned
-            .parent()
-            .unwrap()
-            .join("v1.0.0.json")
-            .exists());
+        // Every superseded version is immutable and stays on disk beside it.
+        // Records sealed under one of them are still readable, which is the
+        // whole reason a bump is a new file rather than an edit — and the
+        // reason this loop grows with each bump rather than tracking only the
+        // previous one. A record sealed under 1.0.0 is not less of a record
+        // because two versions have happened since.
+        for superseded in ["v1.0.0.json", "v1.1.0.json"] {
+            assert!(
+                pinned.parent().unwrap().join(superseded).exists(),
+                "{superseded} must stay on disk: records sealed under it validate against it and \
+                 against nothing else"
+            );
+        }
 
         // And covered by the digest: change it, and the digest changes.
         let before = record.canonical_sha256_hex().unwrap();
@@ -1380,37 +1786,45 @@ mod tests {
     /// comparing byte for byte. Re-run that check whenever this literal
     /// changes — a fixture that only Rust agrees with proves nothing about
     /// what an offline verifier will compute.
+    ///
+    /// Re-run for the 1.1.0 -> 1.2.0 rewrite of this literal, which added
+    /// `model_provenance` and moved every `NO_SOURCE` string to name the new
+    /// version. Two checks, both against these exact bytes: the exporter's
+    /// own `canonical_bytes` reproduces them, and `jsonschema` validates the
+    /// parsed object against the pinned `schema/decision_evidence/v1.2.0.json`
+    /// with zero errors — and against `v1.1.0.json` with errors, which is the
+    /// expected result and the reason the bump is a new file rather than an
+    /// edit.
     #[test]
     fn canonical_bytes_of_the_fixed_fixture_do_not_drift() {
         const EXPECTED: &str = concat!(
-            r#"{"data":{"consent":{"consent_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""consent_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""granted_at":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""purpose_hash":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""scope":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null}},"#,
-            r#""customer":{"data_provenance":{"disclosed_attributes":[],"statement":"Memtara holds no income, liquidity, risk-tolerance or holdings figure for this subject.","vault_root":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null}},"#,
-            r#""data_provenance_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""subject_id":"user_9f2a"},"#,
-            r#""data_schema_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null}},"#,
-            r#""decision":{"business_process":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""decision_id":"71386234-daae-4896-91fe-4c469cf59af2","final_decision":{"decided_at":"2026-08-18T18:03:52Z","decision_basis":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""outcome":"affirmative"},"#,
-            r#""input_context_fingerprint":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""institution":{"org_id":"2f1c8d4e-0a1b-4c3d-9e8f-7a6b5c4d3e2f","org_name":"Example Bank PJSC","org_type":"bank"},"#,
-            r#""output_fingerprint":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""status":"approved","timestamps":{"assessed_at":"2026-08-18T18:03:52Z","exported_at":"2026-08-18T18:04:00Z","opened_at":"2026-08-18T17:59:00Z"}},"#,
-            r#""evidence":{"cryptographic_proofs":[{"accepted_by_bb_verify":true,"circuit":"wealth_suitability","proof_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","public_inputs":["0x01","0x02"],"verification_key_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}],"evidence_artifacts":[{"digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","type":"zk_proof","uri":"proof/wealth_suitability.proof"}]},"#,
-            r#""evidence_schema_version":"1.1.0","human_review":{"action":"approved","human_review_protocol_version":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
+            r#"{"data":{"consent":{"consent_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""consent_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""granted_at":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""purpose_hash":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""scope":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null}},"#,
+            r#""customer":{"data_provenance":{"disclosed_attributes":[],"statement":"Memtara holds no income, liquidity, risk-tolerance or holdings figure for this subject.","vault_root":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null}},"#,
+            r#""data_provenance_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""subject_id":"user_9f2a"},"data_schema_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null}},"#,
+            r#""decision":{"business_process":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""decision_id":"71386234-daae-4896-91fe-4c469cf59af2","final_decision":{"decided_at":"2026-08-18T18:03:52Z","decision_basis":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""outcome":"affirmative"},"input_context_fingerprint":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""institution":{"org_id":"2f1c8d4e-0a1b-4c3d-9e8f-7a6b5c4d3e2f","org_name":"Example Bank PJSC","org_type":"bank"},"output_fingerprint":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""status":"approved","timestamps":{"assessed_at":"2026-08-18T18:03:52Z","exported_at":"2026-08-18T18:04:00Z","opened_at":"2026-08-18T17:59:00Z"}},"evidence":{"cryptographic_proofs":[{"accepted_by_bb_verify":true,"circuit":"wealth_suitability","proof_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","public_inputs":["0x01","0x02"],"verification_key_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}],"evidence_artifacts":[{"digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","type":"zk_proof","uri":"proof/wealth_suitability.proof"}]},"#,
+            r#""evidence_schema_version":"1.2.0","human_review":{"action":"approved","human_review_protocol_version":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
             r#""override":false,"override_reason":null,"performed":false,"review_duration_ms":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
             r#""review_duration_source":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
             r#""reviewed_at":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
             r#""reviewer_id":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
             r#""reviewer_role":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null}},"#,
-            r#""model":null,"policy":{"decision_logic_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""policy_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""policy_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""regulatory_control_mapping":[{"clause":"COB 3.1","framework":"DFSA"},{"clause":"5(c)","framework":"CBUAE"}],"source":"disclosure_requests.policy, snapshotted at open","thresholds":{"source":"product registry, snapshotted when the assessment was opened","threshold_set_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
-            r#""threshold_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.1.0; see schema/decision_evidence/v1.1.0.json for what would populate it","value":null},"#,
+            r#""model":null,"model_provenance":{"as_declared_at_open":{"declaration":"no_ai_participated","identity":{"config_fingerprint":null,"environment":null,"model_name":null,"model_version":null,"prompt_version":null,"provider":null,"system_prompt_or_policy_id":null,"timestamp":null},"#,
+            r#""no_ai_attestation":"suitability produced by the deterministic rules engine; no model in the recommendation path","unidentified_reason":null},"corrected":false,"correction_count":0,"corrections":[],"declared_at":{"state":"recorded","unpopulated_reason":null,"value":"2026-08-18T17:59:00Z"},"#,
+            r#""statement":"The model block in this record is what this organisation asserts about the AI system that participated in this decision. The declaration it made when the assessment was opened is preserved here under as_declared_at_open and is never altered by anything, including a correction. Note when that declaration is made: at open, in the same transaction as the assessment, before the subject's device has produced a proof, before a verdict exists and before any human review \u2014 so it is a statement about a decision that has not happened yet. Compare declared_at with decision.timestamps.assessed_at. Corrections are append-only and numbered from 1; a gap in correction_no means a correction was removed from the database after it was filed, and each one is separately committed to the audit chain."},"#,
+            r#""policy":{"decision_logic_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""policy_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""policy_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""regulatory_control_mapping":[{"clause":"COB 3.1","framework":"DFSA"},{"clause":"5(c)","framework":"CBUAE"}],"source":"disclosure_requests.policy, snapshotted at open","thresholds":{"source":"product registry, snapshotted when the assessment was opened","threshold_set_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""threshold_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
             r#""values":{"max_concentration_percent":20,"min_income":500000,"min_liquidity":250000,"product_risk_level":3}}}}"#,
         );
 
@@ -1759,6 +2173,307 @@ mod tests {
             reviewed_approval().canonical_sha256_hex().unwrap(),
             reviewed_declined.canonical_sha256_hex().unwrap()
         );
+    }
+
+    // -----------------------------------------------------------------
+    // INVARIANT 5 — a corrected attestation is visible, and the original
+    //               survives it
+    // -----------------------------------------------------------------
+
+    /// The record of a corrected decision must not be readable as the record
+    /// of an uncorrected one.
+    ///
+    /// This is the half of attack 11 that the correction path alone does not
+    /// close. A route that files corrections nobody reading the record can
+    /// see would have corrected nothing: the record would go on serving the
+    /// pre-decision declaration with `state: "recorded"`, internally
+    /// consistent and wrong, which is exactly the finding.
+    ///
+    /// What this catches: `model` left pinned to the original when a
+    /// correction exists; `model_provenance` dropped from the record or made
+    /// optional; `corrected` assigned rather than derived; and the original
+    /// declaration being overwritten by the correction instead of preserved
+    /// beside it.
+    #[test]
+    fn a_correction_changes_what_the_record_says_and_keeps_what_it_said() {
+        let before = approval();
+        let after = fixture_with_provenance(
+            DecisionAction::Approved,
+            DecisionOutcome::Affirmative,
+            // The `model` block a builder produces once a correction exists:
+            // the corrected identity, not the declaration it supersedes.
+            ModelAttestation::recorded(ModelIdentity {
+                provider: Provenanced::recorded("anthropic".to_string()),
+                model_name: Provenanced::recorded("claude-opus-4".to_string()),
+                model_version: Provenanced::recorded("20260514".to_string()),
+                prompt_version: Provenanced::recorded("suitability-v7".to_string()),
+                environment: Provenanced::recorded("production".to_string()),
+                config_fingerprint: Provenanced::recorded("ab".repeat(32)),
+                system_prompt_or_policy_id: Provenanced::recorded(
+                    "policy/suitability/7".to_string(),
+                ),
+                timestamp: Provenanced::recorded(ts("2026-08-18T17:58:41Z")),
+            }),
+            HumanReviewInputs::not_performed(DecisionAction::Approved),
+            corrected(),
+        );
+
+        let b = serde_json::to_value(&before).unwrap();
+        let a = serde_json::to_value(&after).unwrap();
+
+        // 1. Uncorrected says so explicitly rather than by an absent key. A
+        //    reader must not have to infer "nobody corrected this" from a
+        //    missing block, because a missing block and a dropped feature
+        //    look identical.
+        assert_eq!(b.pointer("/model_provenance/corrected"), Some(&Value::Bool(false)));
+        assert_eq!(
+            b.pointer("/model_provenance/correction_count").and_then(Value::as_i64),
+            Some(0)
+        );
+
+        // 2. Corrected serves the corrected identity, and the superseded one
+        //    is nowhere in `model`.
+        assert_eq!(a.pointer("/model_provenance/corrected"), Some(&Value::Bool(true)));
+        assert_eq!(
+            a.pointer("/model/provider/value").and_then(Value::as_str),
+            Some("anthropic")
+        );
+
+        // 3. And the declaration made at open survives, verbatim, including
+        //    the fact that it was the strong no-AI assertion — which is the
+        //    single most interesting thing about this particular correction
+        //    and the thing a firm would most want to lose.
+        assert_eq!(
+            a.pointer("/model_provenance/as_declared_at_open/declaration")
+                .and_then(Value::as_str),
+            Some("no_ai_participated")
+        );
+        assert!(a
+            .pointer("/model_provenance/as_declared_at_open/no_ai_attestation")
+            .and_then(Value::as_str)
+            .is_some_and(|s| s.contains("rules engine")));
+        assert_eq!(
+            a.pointer("/model_provenance/as_declared_at_open/identity/provider"),
+            Some(&Value::Null)
+        );
+
+        // 4. Who, why and when — all three, or the correction is an
+        //    unattributed edit wearing an audit trail.
+        for pointer in [
+            "/model_provenance/corrections/0/asserted_by",
+            "/model_provenance/corrections/0/asserted_by_role",
+            "/model_provenance/corrections/0/correction_reason",
+            "/model_provenance/corrections/0/asserted_at",
+            "/model_provenance/corrections/0/recorded_at",
+            "/model_provenance/corrections/0/correction_id",
+        ] {
+            assert!(a.pointer(pointer).is_some_and(|v| !v.is_null()), "{pointer}");
+        }
+
+        // 5. The seal moves. A correction the digested bytes do not carry is
+        //    a correction anyone can drop.
+        assert_ne!(
+            before.canonical_sha256_hex().unwrap(),
+            after.canonical_sha256_hex().unwrap()
+        );
+
+        // 6. `declared_at` is in the record, which is what lets an examiner
+        //    establish the finding's core fact — that the attestation
+        //    predates the decision — without our source. Both operands are
+        //    here; the comparison is deliberately theirs to make.
+        let declared_at = b
+            .pointer("/model_provenance/declared_at/value")
+            .and_then(Value::as_str)
+            .expect("declared_at must be recorded when an attestation exists");
+        let assessed_at = b
+            .pointer("/decision/timestamps/assessed_at")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(declared_at < assessed_at);
+    }
+
+    /// Rejection symmetry survives the correction dimension.
+    ///
+    /// The invariant is that an approval and a decline built from the same
+    /// inputs serialise with an identical key set, so that a digest
+    /// difference can only ever mean tampering and never "this client was
+    /// declined". `model_provenance` is a new top-level block containing a
+    /// variable-length array, which is exactly the shape that breaks it if
+    /// anything in there ever varies by outcome. Nothing does, and this is
+    /// what will fail if something starts to.
+    ///
+    /// Compared against a corrected baseline rather than `approval()`: a
+    /// corrected record legitimately carries more paths than an uncorrected
+    /// one, because the corrections array has entries. That difference is a
+    /// function of what happened to the decision, not of how it came out.
+    #[test]
+    fn a_corrected_approval_and_a_corrected_decline_have_identical_key_sets() {
+        let of = |status, outcome| {
+            paths_of(&fixture_with_provenance(
+                status,
+                outcome,
+                ModelAttestation::recorded(ModelIdentity::participated_but_unidentified(
+                    "correction 1 states an AI participated and cannot be identified",
+                )),
+                HumanReviewInputs::completed(CompletedReview {
+                    reviewer_id: "emp-4417".to_string(),
+                    reviewer_role: "senior_suitability_officer".to_string(),
+                    action: status,
+                    over_ride: ReviewOverride::NotOverridden,
+                    reviewed_at: ts("2026-08-18T18:31:00Z"),
+                    protocol_version: "cob-review-2026.2".to_string(),
+                    duration: Some((214_000, "reviewer_client_asserted".to_string())),
+                }),
+                corrected(),
+            ))
+        };
+        let approved = of(DecisionAction::Approved, DecisionOutcome::Affirmative);
+        let declined = of(DecisionAction::Rejected, DecisionOutcome::Negative);
+        let only_approved: Vec<_> = approved.difference(&declined).collect();
+        let only_declined: Vec<_> = declined.difference(&approved).collect();
+        assert!(
+            only_approved.is_empty() && only_declined.is_empty(),
+            "only in approval: {only_approved:?}; only in decline: {only_declined:?}"
+        );
+
+        // And the correction block is genuinely in the compared set, so this
+        // is not passing because both records happen to lack it.
+        assert!(approved.contains(".model_provenance.corrections[].correction_reason"));
+    }
+
+    /// `model: null` is still the signed no-AI assertion, and a correction
+    /// can never produce it.
+    ///
+    /// The rule migrations/0009 enforces at the row level and
+    /// `model_correction.rs` enforces at the boundary, asserted here at the
+    /// level of the serialised record: because a correction's declaration can
+    /// only be `model_identified` or `participated_but_unidentified`, and
+    /// both of those serialise as a present object, `model: null` in a record
+    /// with `corrected: true` is unreachable. So the assertion is now
+    /// slightly stronger than it was under 1.1.0: null means the declaration
+    /// made at open said no AI took part AND nothing has since said
+    /// otherwise.
+    #[test]
+    fn a_correction_can_never_produce_the_no_ai_assertion() {
+        for declaration in ["model_identified", "participated_but_unidentified"] {
+            let mut provenance = corrected();
+            provenance.corrections[0].declaration = declaration.to_string();
+            // Whatever the corrected declaration is, the model block a
+            // builder produces from it is an object. There is no third
+            // rendering, and `null` is not among the two.
+            let record = fixture_with_provenance(
+                DecisionAction::Approved,
+                DecisionOutcome::Affirmative,
+                ModelAttestation::recorded(ModelIdentity::participated_but_unidentified(
+                    "the correction could not name the deployment",
+                )),
+                HumanReviewInputs::not_performed(DecisionAction::Approved),
+                provenance,
+            );
+            let v = serde_json::to_value(&record).unwrap();
+            assert!(v.get("model").unwrap().is_object(), "{declaration}");
+            assert!(!record.model.asserts_no_ai(), "{declaration}");
+            // And it is still not the same bytes as the assertion, which is
+            // the property that stops a firm that lost its model metadata
+            // from signing a claim that it runs no models.
+            assert_ne!(
+                record.canonical_sha256_hex().unwrap(),
+                approval().canonical_sha256_hex().unwrap()
+            );
+        }
+
+        // The assertion itself is unchanged: an uncorrected record whose
+        // declaration was no-AI still serialises `model` as an explicit null
+        // under a present key.
+        let v = serde_json::to_value(approval()).unwrap();
+        assert_eq!(v.get("model"), Some(&Value::Null));
+        assert_eq!(v.pointer("/model_provenance/corrected"), Some(&Value::Bool(false)));
+    }
+
+    /// `corrected` and `correction_count` cannot contradict the corrections
+    /// they describe, because no call site sets them.
+    ///
+    /// A boolean that a caller assigns is a boolean that will eventually
+    /// disagree with its own data — and this one disagreeing in the
+    /// convenient direction reads as "this decision was never corrected",
+    /// which is the exact claim the correction path exists to make
+    /// impossible.
+    #[test]
+    fn corrected_and_correction_count_are_derived_and_not_assignable() {
+        let none = ModelProvenance::new(
+            Provenanced::unpopulated("no attestation row"),
+            declared_no_ai(),
+            vec![],
+        );
+        assert!(!none.corrected);
+        assert_eq!(none.correction_count, 0);
+
+        let one = corrected();
+        assert!(one.corrected);
+        assert_eq!(one.correction_count, 1);
+        assert_eq!(one.correction_count as usize, one.corrections.len());
+
+        // The pre-capture case: never declared, therefore never corrected,
+        // and the reason travels into both the timestamp and the declaration
+        // rather than leaving either blank.
+        let never = ModelProvenance::never_declared(
+            "this assessment was opened before model identity capture existed",
+        );
+        assert!(!never.corrected);
+        assert_eq!(never.as_declared_at_open.declaration, "participated_but_unidentified");
+        assert!(never.as_declared_at_open.unidentified_reason.is_some());
+        assert!(!never.declared_at.is_recorded());
+    }
+
+    /// The struct and the pinned schema cannot drift apart at the top level.
+    ///
+    /// Cheap, and it catches the specific mistake this change was one step
+    /// away from making: adding a key to `DecisionEvidence` and shipping it
+    /// against a schema that forbids unknown properties, so that every record
+    /// the server produces fails validation in an examiner's own tooling
+    /// while passing every test here.
+    ///
+    /// Only the top level, deliberately. A full JSON Schema validation would
+    /// need a validator dependency this crate does not have and does not need
+    /// — the offline bundle carries one, and `scripts/bundle` runs it. This
+    /// is the tripwire, not the check.
+    #[test]
+    fn the_pinned_schema_names_exactly_the_top_level_keys_this_record_serves() {
+        let pinned = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schema/decision_evidence")
+            .join(format!("v{EVIDENCE_SCHEMA_VERSION}.json"));
+        let schema: Value =
+            serde_json::from_slice(&std::fs::read(&pinned).expect("pinned schema is readable"))
+                .expect("pinned schema is JSON");
+
+        let record = serde_json::to_value(approval()).unwrap();
+        let served: BTreeSet<String> =
+            record.as_object().unwrap().keys().cloned().collect();
+
+        let declared: BTreeSet<String> = schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(
+            served, declared,
+            "the record's top-level keys and the pinned schema's properties must match exactly; \
+             the schema sets additionalProperties: false, so a key on one side only makes every \
+             record this server produces invalid in an examiner's tooling"
+        );
+
+        // And every one of them is required, not merely permitted. A key that
+        // may be absent is a key whose absence carries no meaning, which is
+        // the opposite of what this record is for.
+        let required: BTreeSet<String> = schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(served, required);
+        assert_eq!(schema["properties"]["evidence_schema_version"]["const"], EVIDENCE_SCHEMA_VERSION);
     }
 
     /// `NoVerdict` is not a synonym for a decline. The distinction

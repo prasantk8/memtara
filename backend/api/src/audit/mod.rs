@@ -70,8 +70,22 @@ use crate::state::AppState;
 // every record tamper-evident.
 pub mod checkpoint;
 
+// Binding events, and the verifier that replays them. Together these change
+// what a passing chain check means: `mod.rs` proves the rows are linked to
+// each other and none was removed, `binding.rs` + `replay.rs` prove the rows
+// STILL SAY what was hashed. A database write that edits a decision's model
+// identity or its policy leaves the first check passing and fails the
+// second, which is exactly the gap `tests/break_it/test_attack_04_*`
+// demonstrated. Read `binding.rs`' header before describing this log as
+// making a decision's contents tamper-evident.
+pub mod binding;
+pub mod replay;
+
 pub fn router() -> Router<AppState> {
-    Router::new().route("/orgs/:id/audit-log", get(get_org_audit_log)).merge(checkpoint::router())
+    Router::new()
+        .route("/orgs/:id/audit-log", get(get_org_audit_log))
+        .merge(checkpoint::router())
+        .merge(replay::router())
 }
 
 /// Fixed, arbitrary key for a Postgres advisory lock that serializes every
@@ -102,6 +116,27 @@ fn write_framed(hasher: &mut Sha256, bytes: &[u8]) {
 /// the chain's `prev_hash`. Exposed (not just inlined into `append_locked`)
 /// so tests can recompute it independently to check a stored row's hash is
 /// genuinely derived from its payload, not decorative.
+/// Fold the authenticated `org_id` into the payload that gets hashed.
+///
+/// Lifted out of `append_locked` so `replay.rs` can apply the identical
+/// transformation when it rebuilds a payload to re-hash. If these two ever
+/// diverged, replay would report tampering across the whole log on an
+/// untouched database — and a verifier that cries wolf is worse than no
+/// verifier, because it trains an operator to dismiss the one real alarm.
+pub(crate) fn payload_with_org(
+    org_id: Option<Uuid>,
+    payload: &serde_json::Value,
+) -> serde_json::Value {
+    match (org_id, payload) {
+        (Some(id), serde_json::Value::Object(map)) => {
+            let mut map = map.clone();
+            map.insert("org_id".into(), serde_json::json!(id));
+            serde_json::Value::Object(map)
+        }
+        _ => payload.clone(),
+    }
+}
+
 pub(crate) fn compute_event_hash(
     event_type: &str,
     ref_id: Option<Uuid>,
@@ -129,17 +164,69 @@ pub struct AuditEntry {
     pub created_at: DateTime<Utc>,
 }
 
+/// How an event's payload becomes the bytes that get hashed.
+///
+/// Two encodings exist because two different guarantees are wanted, and
+/// collapsing them would break one of them:
+///
+///   `Serde` — `serde_json::to_vec`. What every event written before
+///     `binding.rs` used, and therefore what every `event_hash` already in
+///     the database was computed over. It cannot be changed: doing so would
+///     invalidate the recorded digest of every historical row, i.e. break the
+///     chain in order to improve it.
+///
+///   `Canonical` — `evidence::canonical::canonical_bytes`, the form
+///     `scripts/export_audit_evidence.py` reproduces byte-for-byte in
+///     Python. Used only by binding events, which are new, so nothing
+///     historical is affected.
+///
+/// The difference is not cosmetic. `serde_json::to_vec` emits non-ASCII
+/// characters raw; the Python canonicaliser escapes them. So an attestation
+/// reason written in French or Arabic — "le déploiement utilisé" — hashes to
+/// bytes an offline verifier could not reproduce. A binding event whose bytes
+/// only Rust can rebuild is not evidence, it is a claim, and the first
+/// version of this module refused such payloads outright: correct about the
+/// divergence, and wrong about the remedy, since it turned a legitimate
+/// non-English request into a 500. Hashing the canonical form instead fixes
+/// the cause. Floats remain refused, because there is no canonical form for
+/// them that both languages render alike (`canonical.rs`, note 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PayloadEncoding {
+    Serde,
+    Canonical,
+}
+
+impl PayloadEncoding {
+    pub(crate) fn encode(self, payload: &serde_json::Value) -> ApiResult<Vec<u8>> {
+        match self {
+            PayloadEncoding::Serde => serde_json::to_vec(payload).map_err(|e| {
+                ApiError::Other(anyhow::anyhow!("audit payload did not serialize: {e}"))
+            }),
+            PayloadEncoding::Canonical => {
+                crate::evidence::canonical::canonical_bytes(payload).map_err(|e| {
+                    ApiError::Other(anyhow::anyhow!(
+                        "audit payload has no canonical form: {e}. A binding event is only \
+                         evidence if an examiner can rebuild its bytes independently, so it is \
+                         refused rather than written in a form only this process can check"
+                    ))
+                })
+            }
+        }
+    }
+}
+
 /// Does the actual lock -> read-last -> hash -> insert sequence against
 /// whatever connection/transaction it's handed. Not exposed directly: call
 /// `record` (own transaction) or `record_in_tx` (caller's existing
 /// transaction), depending on whether the audit write needs to be atomic
 /// with some other write the caller is already doing.
-async fn append_locked(
+async fn append_locked_encoded(
     conn: &mut PgConnection,
     org_id: Option<Uuid>,
     event_type: &str,
     ref_id: Option<Uuid>,
     payload: &serde_json::Value,
+    encoding: PayloadEncoding,
 ) -> ApiResult<AuditEntry> {
     sqlx::query!("select pg_advisory_xact_lock($1)", AUDIT_CHAIN_LOCK_KEY)
         .execute(&mut *conn)
@@ -163,17 +250,9 @@ async fn append_locked(
     // recompute. Overwriting rather than merging is deliberate: a caller that
     // passes a different `org_id` in its own payload is confused, and the
     // authenticated one must win.
-    let payload = match (org_id, payload) {
-        (Some(id), serde_json::Value::Object(map)) => {
-            let mut map = map.clone();
-            map.insert("org_id".into(), serde_json::json!(id));
-            serde_json::Value::Object(map)
-        }
-        _ => payload.clone(),
-    };
+    let payload = payload_with_org(org_id, payload);
 
-    let payload_bytes = serde_json::to_vec(&payload)
-        .map_err(|e| ApiError::Other(anyhow::anyhow!("audit payload did not serialize: {e}")))?;
+    let payload_bytes = encoding.encode(&payload)?;
     let event_hash = compute_event_hash(event_type, ref_id, prev_hash.as_deref(), &payload_bytes);
 
     let row = sqlx::query!(
@@ -213,9 +292,34 @@ pub async fn record(
     payload: serde_json::Value,
 ) -> ApiResult<AuditEntry> {
     let mut tx = db.begin().await?;
-    let entry = append_locked(&mut *tx, org_id, event_type, ref_id, &payload).await?;
+    let entry =
+        append_locked_encoded(&mut *tx, org_id, event_type, ref_id, &payload, PayloadEncoding::Serde)
+            .await?;
     tx.commit().await?;
     Ok(entry)
+}
+
+/// The binding-event entry point. Separate from `record`/`record_in_tx`
+/// rather than a flag on them, so a call site cannot accidentally write a
+/// binding event under the historical encoding — which would produce a
+/// digest an offline verifier could not reproduce, silently, at exactly the
+/// moment the point of the event is to be reproducible.
+pub(crate) async fn record_binding_in_conn(
+    conn: &mut PgConnection,
+    org_id: Uuid,
+    event_type: &str,
+    ref_id: Uuid,
+    payload: serde_json::Value,
+) -> ApiResult<AuditEntry> {
+    append_locked_encoded(
+        conn,
+        Some(org_id),
+        event_type,
+        Some(ref_id),
+        &payload,
+        PayloadEncoding::Canonical,
+    )
+    .await
 }
 
 /// Append one event as part of a transaction the caller already holds.
@@ -231,7 +335,8 @@ pub async fn record_in_tx(
     ref_id: Option<Uuid>,
     payload: serde_json::Value,
 ) -> ApiResult<AuditEntry> {
-    append_locked(&mut **tx, org_id, event_type, ref_id, &payload).await
+    append_locked_encoded(&mut **tx, org_id, event_type, ref_id, &payload, PayloadEncoding::Serde)
+        .await
 }
 
 // ---------------------------------------------------------------------

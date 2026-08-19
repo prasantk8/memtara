@@ -46,6 +46,7 @@
 // remember this (see `issuance::Issuer`).
 
 mod evidence;
+mod model_correction;
 mod model_intake;
 mod review;
 
@@ -105,6 +106,18 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/v1/wealth-assessments/:request_id/review",
             post(review::submit_review),
+        )
+        // Corrections to a decision's model attestation. A COLLECTION, and
+        // plural in the path, because the attestation is written before the
+        // decision exists and an organisation may have to contradict it more
+        // than once — the first correction naming a replacement model, a
+        // later one admitting the replacement cannot be stood behind either.
+        // Not a PATCH on the assessment: the attestation is a statement a
+        // named party made at a named time, not a mutable property of the
+        // decision, and the original row is never altered.
+        .route(
+            "/api/v1/wealth-assessments/:request_id/model-corrections",
+            post(model_correction::submit_model_correction),
         )
 }
 
@@ -332,11 +345,26 @@ async fn issue_wealth_request(
         )));
     }
 
+    // The assessment's open time, taken once and used for both the intake
+    // check and the window below. Taken HERE rather than beside the inserts
+    // so that the declared model-call timestamp is measured against the
+    // moment this request arrived, not against a moment several database
+    // round trips later — the two differ by however long the product lookup
+    // took, which is not a fact about the model and should not move a bound.
+    let opened_at = Utc::now();
+
     // Resolved before any write, so a malformed declaration costs the caller
     // a 400 and costs the database nothing. `None` is not an error here — it
     // resolves to `participated_but_unidentified`, which is the honest
     // reading of silence and the only reading that cannot flatter.
-    let attestation = model_intake::resolve_value(body.ai_participation.clone())?;
+    //
+    // `opened_at` is passed in because `ai_participation.timestamp` is the
+    // only leaf of the model block that can be checked against anything this
+    // server knows, and until this pass nothing checked it: attack 11
+    // declares a model call three years before the assessment and the row
+    // took it verbatim.
+    let attestation =
+        model_intake::resolve_value(body.ai_participation.clone(), opened_at)?;
     let input_context_fingerprint = body
         .input_context_fingerprint
         .as_deref()
@@ -396,7 +424,7 @@ async fn issue_wealth_request(
     .fetch_one(&state.db)
     .await?;
 
-    let window_start = Utc::now();
+    let window_start = opened_at;
     let window_end = window_start + Duration::seconds(ttl);
     let nonce = generate_nonce();
     let product_ref_bytes = product_ref(&isin);
@@ -534,6 +562,22 @@ async fn issue_wealth_request(
         }),
     )
     .await?;
+
+    // Bind the two rows this decision is about to be judged on — the model
+    // identity that was declared, and the predicate set it will be measured
+    // against — into the hash chain, in the same transaction that created
+    // them.
+    //
+    // The event above records THAT a declaration was made. These record WHAT
+    // it said. Until they existed, an UPDATE against
+    // `decision_model_attestations` could rewrite the model the sealed record
+    // serves — up to and including moving it to `no_ai_participated`, so the
+    // record asserted no AI took part in a decision opened naming one — and
+    // leave the chain byte-identical. `audit/binding.rs` carries the full
+    // argument; `tests/break_it/test_attack_04_change_model_identity.py` is
+    // the demonstration that made it necessary.
+    crate::audit::binding::record_model_attestation_binding(&mut tx, org_id, request_id).await?;
+    crate::audit::binding::record_policy_binding(&mut *tx, org_id, request_id).await?;
 
     tx.commit().await?;
 

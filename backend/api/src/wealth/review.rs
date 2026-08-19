@@ -249,10 +249,31 @@ pub(super) async fn record_review(
             "reviewed_at is in the future".into(),
         ));
     }
-    if reviewed_at < assessed_at {
+    // The same skew allowance as the future check above, and for a reason
+    // that is not symmetry: the two timestamps come from DIFFERENT CLOCKS.
+    // `assessed_at` is Postgres's `now()`; `reviewed_at`, when the caller
+    // omits it, defaults to this process's `Utc::now()`. In the pilot
+    // deployment the database runs in a container whose clock is observably
+    // ~130ms ahead of the server's, so the most ordinary submission there is
+    // — a reviewer clicking approve seconds after the verdict, with
+    // `reviewed_at` left to default — was refused with a message accusing
+    // them of reviewing something before it happened.
+    //
+    // Found by comparing this against the equivalent check on the model
+    // correction path, which hit the same wall on its first run.
+    // `tests/break_it/test_attack_04_*`'s `_just_after` helper adds two
+    // seconds to work around it, which is exactly the kind of test-side
+    // accommodation that keeps a real defect invisible.
+    //
+    // The allowance is bounded rather than removed: a review claiming to
+    // predate its verdict by more than the skew window is still refused,
+    // because that is the assertion this check exists to catch — a reviewer
+    // who signed off before there was anything to sign off on.
+    if reviewed_at < assessed_at - Duration::seconds(MAX_CLOCK_SKEW_SECONDS) {
         return Err(ApiError::BadRequest(format!(
-            "reviewed_at ({reviewed_at}) precedes the assessment it reviews ({assessed_at}); a \
-             review cannot have happened before the verdict it is about"
+            "reviewed_at ({reviewed_at}) precedes the assessment it reviews ({assessed_at}) by \
+             more than the {MAX_CLOCK_SKEW_SECONDS}s clock-skew allowance; a review cannot have \
+             happened before the verdict it is about"
         )));
     }
 

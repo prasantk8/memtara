@@ -2,19 +2,19 @@
   "absent": [
     {
       "path": "audit_chain_checkpoint.json",
-      "reason": "No signed chain-head checkpoint exists yet in this deployment. A hash chain protects every record that has been FOLLOWED by another record; the last row in the chain is committed to by nothing, and Memtara's log stores no payload column, so it cannot be recomputed either. Until a published checkpoint exists, treat the most recent event in audit_chain_segment.jsonl as unprotected. See VERIFY.md step 7.",
-      "status": "reserved \u2014 a builder given --chain-checkpoint will populate this"
+      "reason": "This builder was not given a signed chain-head checkpoint. That is a fact about this bundle and not about the deployment: audit/checkpoint.rs signs them and GET /orgs/:id/audit-chain/checkpoint serves them. A hash chain protects every record that has been FOLLOWED by another record, or covered by a signed checkpoint; the last row in the chain is followed by nothing, and Memtara's log stores no payload column, so it cannot be recomputed either. Without a checkpoint in this bundle, treat the most recent event in audit_chain_segment.jsonl as unprotected, and note that a checkpoint is necessarily signed AFTER the events it pins \u2014 so even with one there is a window, the checkpointing interval, in which the newest rows are covered by neither mechanism. See VERIFY.md step 7.",
+      "status": "a builder given --chain-checkpoint will populate this"
     }
   ],
   "bundle_format_version": "1.0.0",
-  "canonical_evidence_sha256": "32740f0be3df9377263d3300fe7419d1f187164e0d3263b9e3a92e1dea7ad261",
+  "canonical_evidence_sha256": "d34f95964d8f52ad33edcb8d78f7b2eba0272f418eea380f30dc42869c678e00",
   "circuit": "wealth_suitability",
-  "created_at": "2026-08-19T09:23:31Z",
+  "created_at": "2026-08-19T20:32:28Z",
   "files": [
     {
-      "bytes": 19554,
+      "bytes": 27994,
       "path": "VERIFY.md",
-      "sha256": "8d4c42cd1d016b41141c04508309435c2ecd5bc7ef0167f754fee47888835178",
+      "sha256": "e00d913935c19d274c649bac7e3c24c9c07733b4c9b27ce1d1f19dde4376ea8b",
       "what": "The procedure. Read this first."
     },
     {
@@ -24,57 +24,63 @@
       "what": "The relying party's own AIHOOTS chain. Unlike the Memtara segment this one is fully recomputable offline, which is why the vendored audit-verify can give a verdict on it."
     },
     {
-      "bytes": 503,
+      "bytes": 1984,
+      "path": "audit_binding_events.jsonl",
+      "sha256": "6ccbd237ea6e532cd7cc12bcdf2ca12c82e9c47e115aa20e5ea8a1f3cabf4373",
+      "what": "The audit_log events that commit to the CONTENTS of the rows this decision is judged on \u2014 the declared model identity, and the policy it was measured against \u2014 each with the payload it hashed, rebuilt from those rows. Recompute event_hash = SHA256(framed(event_type) || framed(ref_id) || framed(prev_hash) || framed(payload)) and compare; VERIFY.md step 7d gives the exact byte layout. WHAT IT DOES NOT PROVE: that the rows were TRUE when written \u2014 the model attestation is a forward declaration made at open time \u2014 and nothing about chain linkage, which is audit_chain_segment.jsonl's subject. Memtara's own verdict is not in this file on purpose: it is ours to make and yours to check."
+    },
+    {
+      "bytes": 1533,
       "path": "audit_chain_segment.jsonl",
-      "sha256": "e5a87e53a9f3bc30d0f78fb005ac3308f8fe0956e5d0512c218c4011cd7656d8",
+      "sha256": "2f05f96a317358fc1a5f7227c378063c8210cd043014bbee36420f40a7e3f074",
       "what": "This assessment's events from Memtara's global hash chain, exported. `seq` values are not consecutive by design: the chain interleaves every tenant."
     },
     {
-      "bytes": 48268,
+      "bytes": 66831,
       "path": "case_file.pdf",
-      "sha256": "5bae21eb4df614c6c3edc4daefc41dde736cc3fc1c8173663a1fdf3ef07b1269",
+      "sha256": "e803a225f59dfe4dcd7da172160b1c2470cab07cee595315a2befeb2c200d279",
       "what": "The human-readable rendering of this record."
     },
     {
       "bytes": 962,
       "path": "case_file.pdf.seal.json",
-      "sha256": "2e7672093e8eff084549280d567dc213d9c9079e5fd63d6a328a6e2ea298b3a0",
+      "sha256": "96d31345dc5c7dade5a94f79186673f73b50dcaa2f26ac52480b43064757b328",
       "what": "The digest seal over the PDF and the evidence."
     },
     {
-      "bytes": 5030,
+      "bytes": 11951,
       "path": "decision_evidence.json",
-      "sha256": "32740f0be3df9377263d3300fe7419d1f187164e0d3263b9e3a92e1dea7ad261",
+      "sha256": "d34f95964d8f52ad33edcb8d78f7b2eba0272f418eea380f30dc42869c678e00",
       "what": "The decision record, canonical form. Its SHA-256 is the seal's canonical_evidence_sha256."
     },
     {
-      "bytes": 7733,
+      "bytes": 11584,
       "path": "evidence_schema/case_file_pack.v1.schema.json",
-      "sha256": "cd69b129b215c69ee43e97e5413bf21f0e84efcbb85794014b7db18a0bdd7358",
+      "sha256": "51525fa18d041986e4ed3d6daa0f5a91539c5f428e754adf3bde928fccea587a",
       "what": "The structure decision_evidence.json is asserted to have."
     },
     {
-      "bytes": 972,
+      "bytes": 979,
       "path": "institution_and_thresholds.json",
-      "sha256": "02ac22a14cd6fe9937fa27fa0e4e68f4fee91517a7613c11148d156563af40e7",
+      "sha256": "acec7cbab7708adb03cbe01f946d9044734cc400a447332d0a4e9ecbe3527fe9",
       "what": "The institution metadata and the thresholds this assessment was measured against."
     },
     {
-      "bytes": 1497,
+      "bytes": 1285,
       "path": "jwks_snapshot.json",
-      "sha256": "12ccfd780504fe5eaaff6e63e2e9cfa8044b15773ea25f1d80cbf61a100735fd",
+      "sha256": "08b246c0fcece087cdc5b0658d792c166bdb692234453b26c29cdfe00a13ee9a",
       "what": "The issuer's key set as captured at export time, pinned by kid and RFC 7638 thumbprint. The verifier reads this file and never the network."
     },
     {
       "bytes": 384,
       "path": "proof/public_inputs",
-      "sha256": "67cb0512d9aa7d6307e8038ce7cc2a75f4efadde9e6cda4c1e40fd0f4acaae0a",
+      "sha256": "89c9b8c058a7a7f4cce7c205490a0282b8b7140d71fe3ab214202f2e4234aa74",
       "what": "12 field elements, 32 bytes each, big-endian, in circuit order. Rebuilt from decision_evidence.json, so it is checkable rather than merely supplied."
     },
     {
       "bytes": 14656,
       "path": "proof/wealth_suitability.proof",
-      "sha256": "5a918a2496fc74d3089e97dc8d49e27e5454cd5e92cbfbbf78cc6388e172ab81",
+      "sha256": "b5ae5f9f84aa60aa39b002a254c14d2545455b3440afdbb5809cdbdb1db8594c",
       "what": "The proof bytes, SHA-256-matched against proof_sha256 in the evidence record."
     },
     {
@@ -114,9 +120,9 @@
       "what": "AIHOOTS's own audit-verify at commit 97cf8f5a6b0512ca862310f5383d20b057da2991."
     },
     {
-      "bytes": 4930,
+      "bytes": 30483,
       "path": "tools/evidence_ops.py",
-      "sha256": "6fcb6f8aae90433a18876fdf6227db3868dbb672be57dad4c3135758455ed2cd",
+      "sha256": "f64b9a94845faf9ea1c6d3645d4889dc18b6449d6787aece2a409a5a65963f2e",
       "what": "The offline verifier, shipped so the bundle can be checked without this repository."
     },
     {
@@ -132,9 +138,9 @@
       "what": "The offline verifier, shipped so the bundle can be checked without this repository."
     },
     {
-      "bytes": 42616,
+      "bytes": 55939,
       "path": "tools/verify_bundle.py",
-      "sha256": "99c76d0506e0c0002c09bf532bc67e564b4102da673ced7ad27cc4e68c853133",
+      "sha256": "375431e901e4ea7a9deaa0f78501909ee2d3e4591d7c0abbe359ffc103c6b7c3",
       "what": "The offline verifier, shipped so the bundle can be checked without this repository."
     },
     {
@@ -182,8 +188,8 @@
     }
   },
   "produced_by": "scripts/bundle/build_bundle.py",
-  "provenance": "REAL: the proof, its 12 public inputs, the verification key, the AIHOOTS audit chain and the Ed25519 issuance token are genuine artefacts \u2014 the proof was produced by nargo 1.0.0-beta.26 and bb 5.1.0 against the committed wealth_suitability circuit, and bb verify accepts it. DEMONSTRATION DATA: the surrounding business record (firm, product registry entry, subject id, Memtara audit-chain rows, timestamps) was constructed offline because no Memtara deployment was running; it is not a real client or a real assessment. Do not present this bundle as evidence of an actual advice event.",
-  "request_id": "71386234-daae-4896-91fe-4c469cf59af2",
+  "provenance": "REAL: built from a live Memtara deployment. The assessment, the proof, its 12 public inputs, the audit-chain rows, the binding events and the Ed25519 issuance token are genuine artefacts produced by this server, nargo 1.0.0-beta.26 and bb 5.1.0 against the committed wealth_suitability circuit. DEMONSTRATION DATA: the firm, the client and the product registry entry were created for this build and are not a real client or a real advice event. Do not present this bundle as evidence of an actual advice event.",
+  "request_id": "03698737-9f9c-425c-b893-3a5c0bfadcce",
   "two_verdicts": {
     "decision_outcome_claimed_by_the_record": "NOT SUITABLE",
     "decision_outcome_read_from_public_input_11": "NOT SUITABLE",

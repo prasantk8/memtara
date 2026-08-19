@@ -238,12 +238,20 @@ jobs:
       - name: Fail if the break-it suite got quieter
         # The failure this guards against is a capability being removed, or a
         # test being softened into a skip, so that an attack silently stops
-        # being attempted. Six attacks run today. If that number falls, the
-        # suite proved less than it did yesterday and someone must say why.
+        # being attempted. Ten attacks are stopped today. If that number falls,
+        # the suite proved less than it did yesterday and someone must say why.
+        #
+        # The floor is raised deliberately as attacks are closed, rather than
+        # left at its original 6. A floor that stays below the current result
+        # stops being a guard the moment the result improves: three attacks
+        # could regress from STOPPED to NOT STOPPED and this step would still
+        # go green. Whoever legitimately lowers this number should lower the
+        # floor in the same commit, which is the point — it forces the
+        # regression to be stated rather than absorbed.
         run: |
           stopped=$(sed -n 's/^\([0-9]*\) stopped.*/\1/p' /tmp/break_it.txt)
-          if [ -z "$stopped" ] || [ "$stopped" -lt 6 ]; then
-            echo "::error::break-it reported ${stopped:-no} attacks stopped; expected at least 6"
+          if [ -z "$stopped" ] || [ "$stopped" -lt 10 ]; then
+            echo "::error::break-it reported ${stopped:-no} attacks stopped; expected at least 10"
             cat /tmp/break_it.txt
             exit 1
           fi

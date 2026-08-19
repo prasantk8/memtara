@@ -301,6 +301,39 @@ def audit_log(base_url: str, desk: Desk) -> list[dict]:
     return resp.json()
 
 
+def binding_replay(base_url: str, desk: Desk, *, ref_id: Optional[str] = None) -> dict:
+    """`GET /orgs/:id/audit-log/replay` — the binding check.
+
+    A different claim from `audit_log` above and the two must not be
+    confused, which is why they are separate helpers rather than one with a
+    flag. `audit_log` returns the chain's rows so a caller can check LINKAGE:
+    that no row was removed or reordered. This returns the result of
+    rebuilding each binding event's payload from the rows it commits to and
+    re-hashing, i.e. whether those rows STILL SAY what was hashed.
+
+    An attack can pass one and fail the other in either direction, and an
+    assertion that checked only linkage would have reported the model-swap
+    finding as clean — which is exactly what happened before
+    `backend/api/src/audit/binding.rs` existed.
+
+    `ref_id` narrows to one decision's events, which is what a test asserting
+    about a specific assessment wants; the org-wide summary counts every
+    decision the desk has opened, including the ones a test opened as
+    controls.
+    """
+    resp = httpx.get(
+        f"{base_url}/orgs/{desk.org_id}/audit-log/replay",
+        headers={"Authorization": f"Bearer {desk.api_key}"},
+        timeout=30.0,
+    )
+    assert resp.status_code == 200, resp.text
+    report = resp.json()
+    if ref_id is not None:
+        report = dict(report)
+        report["events"] = [e for e in report["events"] if e.get("ref_id") == str(ref_id)]
+    return report
+
+
 def request_status(request_id: str) -> str:
     conn = db_connect()
     try:

@@ -3,20 +3,30 @@
 Run: `./scripts/break_it.sh`. Eleven attacks against the real server, real
 `bb` 5.1.0, real Postgres. No mocks anywhere in the attack path.
 
-Revision 2, 19 Aug 2026. Revision 1 was written before the chain-head
-checkpoint landed and before the model and human capture paths existed; six
-of its claims were challenged by the engineer who implemented the fix and
-five of those challenges were correct. Corrections are marked below rather
-than silently applied, because a findings document that quietly rewrites
-itself is worth less than one that shows where it was wrong.
+Revision 3, 20 Aug 2026. Revisions 1 and 2 are not deleted: each finding
+below carries what it said and what changed, because a findings document
+that quietly rewrites itself is worth less than one that shows where it was
+wrong. Revision 2's own header records that six of revision 1's claims were
+challenged and five of those challenges were correct; revision 3 was
+prompted by fixes rather than by errors, and adds one error of its own —
+see Finding 9.
 
 ## Result
 
-    7 stopped   3 not stopped   1 blocked
+    10 stopped   0 not stopped   1 blocked
 
-All three NOT STOPPED rows are real, reproduced findings against the running
-system, not placeholders. Attack 4 is the most serious result of the whole
-exercise and is Finding 6.
+Three rows moved this revision: attacks 3, 4 and 11, all of which the
+previous revision reported as real, reproduced NOT STOPPED findings. They
+moved because the defect was fixed, not because the attack was softened —
+each of those modules now FAILS if the defence is removed, and each carries
+its residual in `BREAK_IT_NOTE` where the harness prints it in the table
+rather than in prose nobody reads.
+
+**Read "10 stopped" with the residuals attached.** Three of those rows are
+detection rather than prevention, and one of them (attack 11) leaves a large
+gap that no control inside this repository can close. A table of ten green
+rows presented without them would be exactly the overclaim this exercise
+exists to catch.
 
 A BLOCKED row is not a pass. It means the capability under attack does not
 exist, so the attack cannot be run. The harness cannot render one as a pass.
@@ -25,15 +35,46 @@ exist, so the attack cannot be run. The harness cannot render one as a pass.
 |---|---|---|
 | 1 | Change the customer's data after the fact | STOPPED |
 | 2 | Change a threshold mid-flight | STOPPED |
-| 3 | Change the policy version mid-flight | **NOT STOPPED** — see Finding 5 |
-| 4 | Change the model identity | **NOT STOPPED** — see Finding 6 |
+| 3 | Change the policy version mid-flight | STOPPED — detected; still no policy *version* |
+| 4 | Change the model identity | STOPPED — detected, not prevented. Finding 6 |
 | 5 | Change or substitute the verification key | STOPPED |
 | 6 | Remove the proof service | STOPPED |
-| 7 | Modify the evidence record | **STOPPED — with a stated residual window** |
+| 7 | Modify the evidence record | STOPPED — with a stated residual window |
 | 8 | Revoke consent | BLOCKED — no consent concept |
 | 9 | Attempt an unauthorised data category | STOPPED |
 | 10 | Bypass human review | STOPPED — handler *and* database |
-| 11 | Swap the model without recording it | **NOT STOPPED** — see Finding 7 |
+| 11 | Swap the model without recording it | STOPPED — with the largest residual. Finding 7 |
+
+## What changed in revision 3
+
+`backend/api/src/audit/binding.rs` and `replay.rs`. The audit chain hashes
+each event's payload and deliberately does not store it. Until now that made
+it a proof of **linkage** — no row removed or reordered — and nothing more.
+Findings 5 and 6 were both instances of the same shape: a decision is judged
+on the contents of a mutable row that no event's payload ever contained, so
+an `UPDATE` rewrote what the sealed record served with the chain
+byte-identical.
+
+A *binding event* is one whose payload is a pure function of the rows it
+commits to. Verification rebuilds that payload from the live rows and
+re-hashes, so an edit changes the result. The payload remains unstored, and
+that is the mechanism rather than a limitation worked around: were it
+stored, verification would hash the stored copy, which the attacker's
+`UPDATE` never touches, and the tamper would be invisible again one table
+over.
+
+There are now **three separable claims** about this log, and this document
+keeps them apart because conflating them is how a system comes to describe
+itself as tamper-evident when only one of them holds:
+
+| Claim | Question | Where |
+|---|---|---|
+| Linkage | Was a row removed or reordered? | the chain; whole-log walk |
+| Head | Is the last row, which nothing follows, committed to? | `audit/checkpoint.rs` |
+| Binding | Do the rows a decision is judged on still *say* what was hashed? | `audit/binding.rs` |
+
+An intact chain is not evidence of an intact record. That sentence is the
+whole of Finding 6.
 
 ---
 
@@ -220,6 +261,34 @@ give it a `policy_id` and `policy_version` so a named-version mismatch becomes
 expressible at all. Both are already required by `DecisionEvidence`, where they
 remain among the ten honestly-unpopulated fields.
 
+### Status in revision 3 — half fixed, and the halves are reported separately
+
+The first half is closed. `disclosure_policy_bound` (`audit/binding.rs`)
+carries the predicate set itself, and verification rebuilds it from the live
+row, so an edit makes the recomputed digest disagree with the recorded one.
+Attack 3 asserts this against a live tamper and now reports STOPPED.
+
+**The second half is not.** There is still no `policy_id` and no
+`policy_version`, and the binding cannot supply one: the payload is not
+stored, so an examiner learns *that* the policy changed and cannot learn
+what it changed *from*. That is a materially better position than silence
+and materially worse than a version history, and attack 3's note says so in
+the table rather than here.
+
+Two residuals worth carrying into a pilot conversation:
+
+- `GET /disclosure-requests/:id` still serves a tampered policy unflagged.
+  The binding verdict reaches a reader through the decision-evidence
+  envelope and the replay endpoint, and not through that route.
+- `SessionPolicy.predicates[].value` is untyped, so a caller could put a
+  float in a policy — which has no canonical form both Python and Rust
+  render alike, and therefore no commitment an independent verifier could
+  reproduce. Such a policy is now refused with a 400 at the boundary rather
+  than accepted and then failing at bind time. Refusal is the right answer:
+  the alternative is decisions whose policy is committed to nothing while
+  every other decision's is, and a gap that exists only for the requests
+  that happened to contain a float is far harder to reason about than a rule.
+
 ## Finding 6 — the eight model fields are committed to nothing
 
 **Severity: this is the most serious result of the exercise.** It sits directly
@@ -256,6 +325,57 @@ decision and not a test's to make. Until one lands, the honest description of
 what we evidence about the model is: *that a declaration was made*, not *which
 model ran*.
 
+### Status in revision 3 — closed, by detection, and neither proposed fix was used
+
+Both proposals above turned out to be wrong, and the reason is worth
+recording because it is the kind of fix a reviewer asks for first.
+
+*Not a digest in a column beside the row.* Whoever can write `model_name` can
+write `model_digest` in the same statement. A digest is only evidence when it
+lives where the attacker's `UPDATE` cannot reach.
+
+*Not a digest inside the existing `wealth_suitability_requested` payload
+either*, though that was closer. That payload includes
+`product_registry_updated_at`, which moves legitimately whenever a product is
+amended, so it cannot be rebuilt tomorrow and therefore cannot be verified —
+a commitment nobody can recompute is a commitment to nothing.
+
+What landed instead is `decision_model_attestation_bound`: a purpose-built
+event whose payload is a pure function of the attestation row and nothing
+else. Verification rebuilds it from the live row and re-hashes.
+`GET /api/v1/wealth-assessments/:id/decision-evidence` now carries a
+`binding_integrity` verdict on **every read**, in the envelope beside the
+record — not inside it, because the record is canonicalised and sealed and a
+value that depends on when you ask cannot live in bytes that must be
+identical every time, and because a tampered record must not be allowed to
+vouch for itself. Detection behind a second endpoint would have meant the
+default behaviour of this system was to serve the altered identity silently.
+
+**This is detection, not prevention, and the difference is the residual.**
+Nothing stops a database `UPDATE`. Three things follow, and all three are
+asserted in the attack module rather than described here:
+
+- The escalation is covered. Moving the row to `no_ai_participated` reaches
+  that assertion by *nulling* columns, so a binding covering only present
+  values would have missed the worst version of this finding. Every key is
+  present in both branches, so nulling changes the hashed bytes rather than
+  shrinking them.
+- Linkage is *still* byte-identical across the swap, and the attack asserts
+  that too. An auditor walking `prev_hash`/`event_hash` adjacency sees a
+  healthy chain and would have signed this off. That is the trap, and it is
+  why the three claims are tabulated at the top of this document.
+- A consumer that parses `decision_evidence` and ignores the envelope around
+  it still sees the swapped identity with no warning.
+
+An offline party can now check this without us:
+`scripts/bundle/` carries each binding event's payload, `prev_hash` and
+recorded digest into the bundle, and the vendored verifier recomputes the
+hash in Python and cross-checks the bound identity against the record's own
+(steps 7d and 7e in `docs/VERIFY.md`). Against a real database tamper
+followed by a freshly sealed re-export, the manifest, the seal and the chain
+linkage all pass and **7d is the only step that fails** — which is the entire
+argument for the step existing.
+
 ## Finding 7 — the model attestation is a forward declaration nothing can rebind
 
 Distinct from Finding 6, and not fixed by fixing it: a control that detected
@@ -290,6 +410,57 @@ an examiner can see that a later decision ran under version 2 while this one
 is pinned to version 1. The model block has no version, no snapshot
 discipline, and no rebind.
 
+### Status in revision 3 — closed against the defence this finding named, with the largest residual in the document
+
+The defence this finding asked for was "a marker distinguishing a forward
+declaration from a fact observed at decision time". That exists, and all
+three parts of the finding are answered:
+
+- **The impossible timestamp is refused.** Validated against a window
+  anchored on the assessment's own open time. The 2023-for-2026 payload that
+  used to be stored verbatim is now a 400, and attack 11 asserts both the
+  refusal *and* that a contemporaneous timestamp is still accepted — a check
+  that refused everything would pass the first assertion alone. The window is
+  deliberately loose (30 days back, 300s forward): a tight bound would refuse
+  legitimate overnight batch scoring, and the pressure would then land on
+  making the field *pass* rather than *true*, which would leave the leaf
+  worth nothing again.
+- **The honest correction is now possible.** `POST
+  /api/v1/wealth-assessments/:id/model-corrections`, append-only, numbered
+  densely from 1 so a deleted correction reads as a gap, each one separately
+  bound to the chain. The original attestation row is never mutated: an
+  organisation that declared model A and later corrected to model B has said
+  two things and an examiner is entitled to both.
+  A correction may weaken or re-point an AI claim and may **never** strengthen
+  it into `no_ai_participated`. A correction is filed after the verdict, after
+  the review, possibly after a complaint — exactly when a firm most wants the
+  flattering answer and has the weakest claim to it. What that forecloses is
+  named in the migration rather than left to be discovered: an organisation
+  that declared a model and later genuinely establishes the rules engine
+  decided has no route here.
+- **The record stops looking unchanged.** Schema v1.2.0 adds
+  `model_provenance`: `declared_at`, `as_declared_at_open` preserved verbatim,
+  `corrected`, `correction_count`, `corrections[]`, and a statement telling
+  the reader to compare `declared_at` against
+  `decision.timestamps.assessed_at`. `model` serves the *effective* identity —
+  leaving it pinned to a retracted declaration with a footnote elsewhere would
+  hand every reader, and every tool written against v1.1.0, an identity its own
+  owner has withdrawn.
+
+**The residual is the largest in this document and should be read before any
+pilot conversation.** An organisation that swaps a model and *says nothing*
+still produces a record in which nothing changed, and attack 11 asserts that
+outcome explicitly rather than describing it. Nothing internal can prevent
+it: the model identity is an assertion made by the calling system, there is
+no LLM gateway in this repository, and the scope decision is that there will
+not be one this quarter — so there is nothing to check the assertion against.
+
+What this system can now do is make the honest correction possible, commit
+it, refuse an assertion impossible on its face, and tell every reader that
+the declaration predates the decision and has not been reconfirmed. It cannot
+establish which model ran, and no wording in a sales conversation should
+suggest otherwise.
+
 ## Finding 8 — human review holds at both layers, and the residual is a consistent lie
 
 Attack 10 is the one clean result among the three. Seven forgeries were
@@ -321,3 +492,104 @@ reviewer to a genuine decision. The only thing distinguishing it from a real
 review is the missing `decision_human_reviewed` entry in the hash chain — a
 contradiction the `DecisionEvidence` record does not carry and nothing
 cross-checks. The raw material for that check exists; the check does not.
+
+---
+
+**Findings 9 to 11 correspond to no attack row.** They were found while
+building the fixes above — two of them in code written during this same
+revision — and they are recorded here rather than in a changelog because the
+point of this document is what an adversarial pass turns up, and a pass that
+only ever indicts the code you started with is not adversarial enough. Note
+that attack numbers and finding numbers have never matched in this document:
+attack 11 is Finding 7.
+
+## Finding 9 — the first version of the binding fix locked out every non-English deployment
+
+Recorded because it was ours, it shipped inside the fix for Finding 6, and it
+was caught by two engineers independently rather than by anyone using it.
+
+Binding events are only worth something if an examiner can rebuild their
+bytes without us, so the first implementation enforced that by refusing any
+payload where `serde_json::to_vec` and the canonical form disagreed. The
+diagnosis was right. The remedy was wrong, because those two encodings
+disagree on **every character outside ASCII** — `to_vec` emits them raw,
+the canonicaliser escapes them. Measured against the running server:
+
+    plain ASCII          201
+    "modèle-de-risque"   500  {"error":"internal error"}
+    "نموذج"              500
+    U+007F               500
+
+So a DIFC or CBUAE deployment could not open a decision naming an Arabic
+model or writing an attestation reason in French, and the caller got a bare
+500 with no diagnostic, at decision-open time. The correction path made it
+worse: `correction_reason` is required, substantive and likely to contain a
+person's name.
+
+**Fixed by removing the cause rather than the symptom.** Binding events now
+hash the canonical form directly (`audit::PayloadEncoding::Canonical`), so
+every payload is reproducible in Python instead of the unreproducible ones
+being refused. This is safe *only* because binding events are new: switching
+the encoding for historical events would recompute every `event_hash` already
+in the database — breaking the chain in order to improve it — which is why
+the two encodings coexist as an explicit enum rather than one being replaced.
+
+One divergence survives and is still refused: a float has no rendering that
+Python's `json.dumps` and Rust's `ryu` agree on, so a policy containing one
+is a 400 at the boundary. See Finding 5's residuals.
+
+Two things this cost, worth naming:
+
+- The severity was invisible from the inside. Every test, fixture and demo in
+  this repository is written in English, so the entire suite passed while the
+  product was unusable for a whole class of customer in its target market.
+  `tests/test_wealth_suitability_e2e.py` now carries the regression,
+  parametrised by script rather than written once with an accented character.
+- The failure mode was the wrong shape. "Refuse rather than fake" is the right
+  instinct and it is applied throughout this codebase, but it was applied here
+  to a caller who had done nothing wrong, as a 500, with no explanation. Where
+  a refusal is genuinely correct — the float case — it now happens as a 400 at
+  the boundary with the reason stated.
+
+## Finding 10 — `reviewed_at` was refused on the most ordinary review there is
+
+Found while building the correction path, by hitting the same wall one table
+over.
+
+`review.rs` refused any `reviewed_at` earlier than the assessment's
+`assessed_at`, with no allowance, and those two timestamps come from
+**different clocks**: `assessed_at` is Postgres's `now()`, while `reviewed_at`
+defaults to the API process's. In the pilot deployment the database container
+runs observably ahead of the server. So a reviewer clicking approve seconds
+after the verdict, with `reviewed_at` left to default, was refused — and told
+they had reviewed something before it happened.
+
+It survived because the break-it modules work around it: a `_just_after`
+helper adds two seconds to every `reviewed_at` they submit. That is exactly
+the kind of test-side accommodation that keeps a real defect invisible, and
+it is worth looking for others.
+
+**Fixed** with the same bounded skew allowance the future-timestamp check
+already used, in both directions. A review claiming to predate its verdict by
+more than the window is still refused, because that is the assertion the
+check exists to catch.
+
+## Finding 11 — `model_config_fingerprint` promised a digest and accepted anything
+
+`migrations/0006` constrained `input_context_fingerprint` and
+`output_fingerprint` to lower-case hex SHA-256 at the row level and left
+`model_config_fingerprint` unconstrained. Through the API the three behave
+identically — `parse_digest` validates all of them — so the asymmetry was
+invisible to every test and every caller. It was visible to the actor every
+finding in this document is about: a direct write could put `temperature=0`
+under a column whose name promises a value an examiner can recompute.
+
+Narrow, and worth fixing for what the name claims rather than for what an
+attacker gains. `migrations/0010` adds the constraint, validated rather than
+`NOT VALID`, after confirming no existing row violates it.
+
+It buys shape, not truth: a well-formed digest of nothing in particular still
+passes, and nothing available here could tell the difference, because the
+configuration it fingerprints lives in the calling system. What it removes is
+the case where a reader cannot even tell whether recomputation was ever
+possible.

@@ -36,7 +36,7 @@
 // answer costs them a sentence they had to type. That asymmetry is the whole
 // design, and it is the reverse of what happens by default.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ApiError, ApiResult};
@@ -49,6 +49,62 @@ use crate::evidence::{ModelAttestation, ModelIdentity, Provenanced};
 /// `"-"`, which is what a required free-text field collects when nobody
 /// means to fill it in.
 const MIN_STATEMENT_CHARS: usize = 10;
+
+// ---------------------------------------------------------------------
+// THE WINDOW A DECLARED MODEL CALL MAY SIT IN
+//
+// `model.timestamp` is the one leaf capable of dating a model call against
+// the decision it claims to describe, and until this pass it was stored
+// verbatim with nothing looking at it: attack 11 declares a call timestamped
+// January 2023 for an assessment opened in 2026, and the server accepts it,
+// stores it, and serves it as `state: "recorded"`. A leaf that would expose a
+// stale attestation is worth nothing if it is never read.
+//
+// Both bounds are measured against the ASSESSMENT'S OWN OPEN TIME — the
+// server's clock at the moment `POST /api/v1/issue-wealth-request` was
+// received, and the same instant that becomes `window_start` — rather than
+// against `now()` at some later point, because the question is not "is this
+// timestamp plausible today" but "could this model call have produced the
+// recommendation THIS assessment is about".
+// ---------------------------------------------------------------------
+
+/// How far AHEAD of the assessment's open time a declared model call may sit.
+///
+/// Some tolerance is mandatory and not merely kind. The timestamp is produced
+/// by the calling AI system's clock, the open time by ours, and two hosts in
+/// the same rack routinely disagree by seconds — the break-it suite documents
+/// this deployment's own Postgres container running tens of milliseconds ahead
+/// of the server process, and a bank desktop is far worse than a container.
+/// Refusing on a few seconds of skew would fail honest requests, and an
+/// endpoint that 400s an honest integration is one a bank routes around, which
+/// would cost the record the whole field.
+///
+/// Beyond the tolerance it is not skew, it is nonsense: a model call in next
+/// quarter cannot have produced a recommendation being assessed now. Five
+/// minutes, the same number and the same reasoning as
+/// `review::MAX_CLOCK_SKEW_SECONDS`, so a caller integrating both endpoints
+/// has one allowance to learn rather than two.
+const MAX_MODEL_CALL_SKEW_SECONDS: i64 = 300;
+
+/// How far BEHIND the assessment's open time a declared model call may sit.
+///
+/// A model call legitimately precedes the assessment: the recommendation is
+/// produced first and the assessment is opened to evidence it. Overnight batch
+/// scoring, a desk that picks the run up the next morning, a long weekend —
+/// all normal, all hours or days rather than seconds, which is why this bound
+/// is nothing like the one above.
+///
+/// Thirty days is deliberately loose, and the looseness is the point. This
+/// check exists to refuse a timestamp that is IMPOSSIBLE for this assessment,
+/// not to enforce a model-freshness policy that no firm here has stated and
+/// that Memtara has no standing to invent. A tight bound would reject
+/// legitimate submissions, and the pressure it created would land on making
+/// the field *pass* rather than making it *true* — integrators would send
+/// `now()` and the leaf would go back to being worth nothing, which is exactly
+/// the state this pass is closing. Thirty days is longer than any advisory
+/// episode this product has seen and three orders of magnitude shorter than
+/// the three-year gap attack 11 walks through.
+const MAX_MODEL_CALL_BACKDATE_DAYS: i64 = 30;
 
 /// What the caller declares about AI participation in this decision.
 ///
@@ -195,6 +251,63 @@ pub fn parse_digest(field: &str, value: &str) -> ApiResult<String> {
     Ok(v)
 }
 
+/// A declared model-call timestamp that could belong to this assessment, or a
+/// 400 that says why it could not.
+///
+/// Refused rather than stored, and refused rather than downgraded to an
+/// `unpopulated` leaf with a note. Both softer options were considered:
+///
+///   * Storing it and flagging it in the record moves the judgement to
+///     whoever reads the export, months later, when the integration that
+///     produced it has shipped a thousand more. The caller is the only party
+///     who can still find out what happened, and they are on the phone right
+///     now.
+///   * Dropping the value and recording "the caller supplied an implausible
+///     timestamp" would put a fact about our validator inside the model
+///     block, where every other leaf is a fact about the model. It would also
+///     silently discard the single most interesting field in a swapped
+///     attestation.
+///
+/// So it is a 400, and the body says which bound was crossed and by how much,
+/// because "invalid timestamp" is a message an integrator cannot act on.
+fn check_model_timestamp(
+    timestamp: DateTime<Utc>,
+    assessment_opened_at: DateTime<Utc>,
+) -> ApiResult<DateTime<Utc>> {
+    let latest = assessment_opened_at + Duration::seconds(MAX_MODEL_CALL_SKEW_SECONDS);
+    if timestamp > latest {
+        let ahead = (timestamp - assessment_opened_at).num_seconds();
+        return Err(ApiError::BadRequest(format!(
+            "ai_participation.timestamp ({timestamp}) is {ahead} seconds after this assessment \
+             was opened ({assessment_opened_at}), which is more than the \
+             {MAX_MODEL_CALL_SKEW_SECONDS} seconds of clock skew this endpoint tolerates. The \
+             field records when the MODEL was called, and a model call cannot have produced the \
+             recommendation an assessment opened before it is about. Some tolerance is allowed \
+             because your clock and ours are different clocks; this is past that. If the intent \
+             was to record when the assessment was opened, that is decision.timestamps.opened_at \
+             and this server sets it"
+        )));
+    }
+
+    let earliest = assessment_opened_at - Duration::days(MAX_MODEL_CALL_BACKDATE_DAYS);
+    if timestamp < earliest {
+        let behind = (assessment_opened_at - timestamp).num_days();
+        return Err(ApiError::BadRequest(format!(
+            "ai_participation.timestamp ({timestamp}) is {behind} days before this assessment was \
+             opened ({assessment_opened_at}), and this endpoint accepts at most \
+             {MAX_MODEL_CALL_BACKDATE_DAYS}. A model call legitimately precedes the assessment it \
+             is evidenced by — overnight scoring picked up the next morning is ordinary — so the \
+             bound is deliberately generous rather than tight. It is not a freshness policy and \
+             is not trying to be one. What it refuses is a timestamp that cannot belong to this \
+             decision at all, which is the shape a stale or copied attestation takes: the model \
+             identity is asserted by the calling system and this leaf is the only one that can \
+             be checked against anything, so it is checked"
+        )));
+    }
+
+    Ok(timestamp)
+}
+
 /// Parse and resolve the raw `ai_participation` value from the request body.
 ///
 /// -------------------------------------------------------------------
@@ -210,10 +323,21 @@ pub fn parse_digest(field: &str, value: &str) -> ApiResult<String> {
 ///
 /// So the field arrives untyped and is parsed here, where the error can name
 /// the three declarations and what each requires.
-pub fn resolve_value(raw: Option<serde_json::Value>) -> ApiResult<AttestationRow> {
+///
+/// `assessment_opened_at` is the server's clock at the moment the assessment
+/// this declaration belongs to was opened. It is a parameter rather than a
+/// `Utc::now()` inside this function because the correction endpoint resolves
+/// a declaration weeks after the fact and must measure its timestamp against
+/// the same instant the original was measured against — otherwise a
+/// correction could carry a model call the original declaration would have
+/// been refused for.
+pub fn resolve_value(
+    raw: Option<serde_json::Value>,
+    assessment_opened_at: DateTime<Utc>,
+) -> ApiResult<AttestationRow> {
     // A JSON `null` is silence, not a malformed declaration.
     let raw = match raw {
-        None | Some(serde_json::Value::Null) => return resolve(None),
+        None | Some(serde_json::Value::Null) => return resolve(None, assessment_opened_at),
         Some(v) => v,
     };
     let declared: AiParticipation = serde_json::from_value(raw).map_err(|e| {
@@ -229,7 +353,7 @@ pub fn resolve_value(raw: Option<serde_json::Value>) -> ApiResult<AttestationRow
              records the first"
         ))
     })?;
-    resolve(Some(declared))
+    resolve(Some(declared), assessment_opened_at)
 }
 
 /// Turn what the caller said — including having said nothing — into the row
@@ -238,7 +362,10 @@ pub fn resolve_value(raw: Option<serde_json::Value>) -> ApiResult<AttestationRow
 /// `None` is a first-class input here, not an error and not the empty case.
 /// It is the whole reason this function takes an `Option` rather than being
 /// called only when a block is present.
-pub fn resolve(declared: Option<AiParticipation>) -> ApiResult<AttestationRow> {
+pub fn resolve(
+    declared: Option<AiParticipation>,
+    assessment_opened_at: DateTime<Utc>,
+) -> ApiResult<AttestationRow> {
     let blank = AttestationRow {
         declaration: "participated_but_unidentified",
         no_ai_attestation: None,
@@ -318,7 +445,14 @@ pub fn resolve(declared: Option<AiParticipation>) -> ApiResult<AttestationRow> {
                     "system_prompt_or_policy_id",
                     system_prompt_or_policy_id,
                 )?,
-                model_timestamp: timestamp,
+                // Checked, not merely stored — see `check_model_timestamp`.
+                // `None` stays `None`: a caller that supplied no timestamp
+                // has an honest gap, and refusing it would trade a partial
+                // truth for no truth, which is the rule the other six
+                // optional leaves already follow.
+                model_timestamp: timestamp
+                    .map(|t| check_model_timestamp(t, assessment_opened_at))
+                    .transpose()?,
                 ..blank
             })
         }
@@ -379,6 +513,87 @@ pub fn to_attestation(row: &AttestationRow) -> ModelAttestation {
     }
 }
 
+/// Read a CORRECTION back into the evidence record's `model` block.
+///
+/// Separate from `to_attestation` and deliberately not a parameter on it. The
+/// two produce the same shape from the same `AttestationRow`, and every
+/// sentence they put in the record differs: a leaf the calling system left out
+/// at open time is filled by a field on `issue-wealth-request`, and a leaf a
+/// correction left out is filled by a field on the corrections endpoint. A
+/// shared function with a flag would have produced one of those two sentences
+/// for both cases, and the wrong one is worse than none — it tells a reader to
+/// go and look at a request that has already happened.
+///
+/// The reason text names the correction by number and by author, so a reader
+/// who lands on a single leaf learns that the value they are looking at is not
+/// the one this decision was opened with, without having to know that
+/// `model_provenance` exists.
+///
+/// `no_ai_participated` cannot arrive here: migrations/0009 forbids it as a
+/// corrected declaration and `model_correction.rs` refuses it with a 400. The
+/// arm is handled rather than unwrapped for the reason `wealth/evidence.rs`
+/// gives about impossible database rows — a row read out of a database is
+/// input, and the honest failure for one is a record that says what it found,
+/// not a panic.
+pub fn correction_to_attestation(
+    correction_no: i32,
+    asserted_by: &str,
+    asserted_at: DateTime<Utc>,
+    row: &AttestationRow,
+) -> ModelAttestation {
+    let provenance = format!(
+        "correction {correction_no}, asserted by {asserted_by} on {asserted_at}, supersedes the \
+         model identity this assessment was opened with. The original declaration is preserved \
+         unaltered at model_provenance.as_declared_at_open"
+    );
+
+    let gap = |field: &str| {
+        format!(
+            "{provenance}. That correction did not supply {field}; it would be supplied as \
+             corrected_model.{field} on \
+             POST /api/v1/wealth-assessments/{{request_id}}/model-corrections"
+        )
+    };
+    let leaf = |field: &str, value: Option<String>| match value {
+        Some(v) => Provenanced::recorded(v),
+        None => Provenanced::unpopulated(gap(field)),
+    };
+
+    match row.declaration {
+        "model_identified" => ModelAttestation::recorded(ModelIdentity {
+            provider: leaf("provider", row.provider.clone()),
+            model_name: leaf("model_name", row.model_name.clone()),
+            model_version: leaf("model_version", row.model_version.clone()),
+            prompt_version: leaf("prompt_version", row.prompt_version.clone()),
+            environment: leaf("environment", row.environment.clone()),
+            config_fingerprint: leaf("config_fingerprint", row.config_fingerprint.clone()),
+            system_prompt_or_policy_id: leaf(
+                "system_prompt_or_policy_id",
+                row.system_prompt_or_policy_id.clone(),
+            ),
+            timestamp: match row.model_timestamp {
+                Some(t) => Provenanced::recorded(t),
+                None => Provenanced::unpopulated(gap("timestamp")),
+            },
+        }),
+        // Both remaining cases produce an object with unpopulated leaves and
+        // never `model: null`. An AI whose identity is unknown must not
+        // collapse into the bytes that assert no AI took part — and a
+        // correction is precisely where that collapse would be most damaging,
+        // because it would let a decision opened naming a model end up
+        // asserting none was involved.
+        _ => ModelAttestation::recorded(ModelIdentity::participated_but_unidentified(&format!(
+            "{provenance}. It states that an AI participated in this decision and that the \
+             organisation cannot identify which: {}",
+            row.unidentified_reason
+                .as_deref()
+                .unwrap_or("no reason was recorded, which the CHECK constraint \
+                            decision_model_corrections_unidentified_names_why forbids — this row \
+                            was written around the schema"),
+        ))),
+    }
+}
+
 /// The attestation for a decision opened before this capture path existed —
 /// or for one whose row is somehow absent.
 ///
@@ -399,8 +614,16 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A fixed open time, so that every timestamp assertion below is about
+    /// the bounds and not about how long the test took to run.
+    fn opened_at() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-08-18T17:59:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
     fn parse(v: serde_json::Value) -> Result<AttestationRow, ApiError> {
-        resolve_value(Some(v))
+        resolve_value(Some(v), opened_at())
     }
 
     /// The invariant the whole module exists for.
@@ -412,7 +635,7 @@ mod tests {
     #[test]
     fn no_route_from_silence_or_error_reaches_the_no_ai_assertion() {
         // (a) Field entirely absent.
-        let silent = resolve(None).unwrap();
+        let silent = resolve(None, opened_at()).unwrap();
         assert_eq!(silent.declaration, "participated_but_unidentified");
         assert!(to_attestation(&silent).identity().is_some());
         assert!(!to_attestation(&silent).asserts_no_ai());
@@ -568,6 +791,104 @@ mod tests {
 
         assert!(parse_digest("x", &"a".repeat(63)).is_err());
         assert!(parse_digest("x", &"g".repeat(64)).is_err());
+    }
+
+    /// The one leaf that can date a model call against its decision is
+    /// checked against that decision, and the check is neither a wall nor a
+    /// decoration.
+    ///
+    /// The load-bearing case is the first one: attack 11 declares a model
+    /// call in January 2023 for an assessment opened in 2026 and the server
+    /// used to store it verbatim and serve it as `state: "recorded"`. The
+    /// rest of the table exists so that closing that hole cannot be mistaken
+    /// for closing the field: an honest overnight batch, a caller whose clock
+    /// is a minute fast, and a caller with no timestamp at all must all still
+    /// get through.
+    #[test]
+    fn a_model_call_that_cannot_belong_to_this_assessment_is_refused() {
+        let identified = |ts: &str| {
+            json!({
+                "declaration": "model_identified",
+                "provider": "anthropic",
+                "model_name": "claude-opus-4",
+                "timestamp": ts,
+            })
+        };
+        let stored = |ts: &str| parse(identified(ts)).map(|r| r.model_timestamp);
+
+        // (a) THE FINDING. Three years before the assessment was opened.
+        let err = stored("2023-01-05T04:00:00Z").unwrap_err();
+        match &err {
+            ApiError::BadRequest(m) => {
+                assert!(m.contains("days before this assessment was opened"), "{m}");
+                // The body names the bound rather than only announcing a
+                // refusal, because an integrator cannot act on "invalid".
+                assert!(m.contains(&MAX_MODEL_CALL_BACKDATE_DAYS.to_string()), "{m}");
+            }
+            other => panic!("expected a 400 naming the backdate bound, got {other:?}"),
+        }
+
+        // (b) A model call in next quarter is nonsense in the other
+        //     direction, and is refused for a visibly different reason.
+        let err = stored("2026-11-01T00:00:00Z").unwrap_err();
+        match &err {
+            ApiError::BadRequest(m) => {
+                assert!(m.contains("after this assessment was opened"), "{m}")
+            }
+            other => panic!("expected a 400 naming the skew bound, got {other:?}"),
+        }
+
+        // (c) Legitimate submissions, all of which a tighter rule would have
+        //     broken. A call a few seconds after our clock (skew), one a
+        //     minute before (the ordinary case), an overnight batch picked up
+        //     the next morning, and a fortnight-old run.
+        for ok in [
+            "2026-08-18T18:01:00Z",
+            "2026-08-18T17:58:00Z",
+            "2026-08-18T02:14:33Z",
+            "2026-08-04T09:00:00Z",
+        ] {
+            assert!(stored(ok).is_ok(), "{ok} must not be refused");
+        }
+
+        // (d) Exactly on each bound is accepted; one second past each is
+        //     not. Pins the comparison as inclusive rather than leaving it to
+        //     whichever way a future `>` gets typed.
+        let open = opened_at();
+        let at = |t: DateTime<Utc>| stored(&t.to_rfc3339());
+        assert!(at(open + Duration::seconds(MAX_MODEL_CALL_SKEW_SECONDS)).is_ok());
+        assert!(at(open + Duration::seconds(MAX_MODEL_CALL_SKEW_SECONDS + 1)).is_err());
+        assert!(at(open - Duration::days(MAX_MODEL_CALL_BACKDATE_DAYS)).is_ok());
+        assert!(at(open - Duration::days(MAX_MODEL_CALL_BACKDATE_DAYS) - Duration::seconds(1)).is_err());
+
+        // (e) No timestamp at all is still an honest gap and not an error.
+        //     Refusing it would trade a partial truth for no truth, which is
+        //     the rule the other six optional leaves follow.
+        let none = parse(json!({
+            "declaration": "model_identified",
+            "provider": "anthropic",
+            "model_name": "claude-opus-4",
+        }))
+        .unwrap();
+        assert!(none.model_timestamp.is_none());
+        let v = serde_json::to_value(to_attestation(&none)).unwrap();
+        assert_eq!(
+            v.pointer("/timestamp/state").and_then(|x| x.as_str()),
+            Some("unpopulated")
+        );
+
+        // (f) A refused timestamp refuses the whole declaration. It must not
+        //     be possible to get a row written with the offending value
+        //     quietly dropped — that would turn a caller's error into a
+        //     silent gap in the record, and the gap would name our validator
+        //     rather than the model.
+        assert!(parse(json!({
+            "declaration": "model_identified",
+            "provider": "anthropic",
+            "model_name": "claude-opus-4",
+            "timestamp": "2023-01-05T04:00:00Z",
+        }))
+        .is_err());
     }
 
     /// A decision from before the capture path is unidentified, never

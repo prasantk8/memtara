@@ -47,7 +47,10 @@ for _path in (REPO_ROOT, Path(__file__).resolve().parent):
 from scripts.bundle import build_bundle as builder  # noqa: E402
 from scripts.bundle import verify_bundle as verifier  # noqa: E402
 from scripts.bundle.evidence_ops import (  # noqa: E402
+    BINDING_EVENTS_FILENAME,
+    MODEL_ATTESTATION_BOUND,
     OUTCOME_INDEX,
+    binding_event_hash,
     canonical_bytes,
     outcome_from_public_inputs,
     pack_public_inputs,
@@ -56,6 +59,7 @@ from scripts.bundle.jwks import okp_thumbprint, snapshot_from_jwks  # noqa: E402
 from scripts.export_audit_evidence import (  # noqa: E402
     build_pack,
     canonical_bytes as exporter_canonical_bytes,
+    collect_binding,
     decode_proof_token,
     render_and_seal,
 )
@@ -148,6 +152,139 @@ def make_jwks_and_token(*, proof_sha256: str, suitable: bool) -> tuple[dict, str
     return jwks, token
 
 
+# The model this fixture's decision was opened against. One dict, used to build
+# BOTH the binding payload and the record's model block, so that "they agree"
+# in the default bundle is a property of the fixture rather than of two lists
+# that were typed out to match.
+FIXTURE_MODEL = {
+    "provider": "anthropic",
+    "model_name": "claude-opus-4",
+    "model_version": "20260514",
+    "prompt_version": "suitability-v7",
+    "environment": "production",
+    "config_fingerprint": "ab" * 32,
+    "system_prompt_or_policy_id": "policy/suitability/7",
+    "timestamp": "2026-09-16T08:54:58Z",
+}
+
+# Deliberately not the first event in the chain: `prev_hash` is an input to the
+# digest, and a fixture that left it empty would never exercise the framing of
+# a non-empty predecessor.
+FIXTURE_PREV_HASH = base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
+
+
+def binding_payload(request_id: str, org_id: str, *, model: dict | None, declaration: str) -> dict:
+    """The payload `audit/binding.rs::model_attestation_payload` builds.
+
+    Restated here rather than imported, for the same reason the bundle restates
+    `canonical_bytes`: a Rust file is not importable from Python. What keeps
+    the two honest is not this dict but
+    `test_the_binding_recomputation_matches_a_real_server`, which checks the
+    construction against digests a live server produced.
+    """
+    m = model or {}
+    return {
+        "binding": "decision_model_attestation_binding/v1",
+        "request_id": request_id,
+        "org_id": org_id,
+        "declaration": declaration,
+        "no_ai_attestation": None if model else
+        "the deterministic suitability rules engine decided this; no model was in the path",
+        "unidentified_reason": None,
+        "model_provider": m.get("provider"),
+        "model_name": m.get("model_name"),
+        "model_version": m.get("model_version"),
+        "prompt_version": m.get("prompt_version"),
+        "model_environment": m.get("environment"),
+        "model_config_fingerprint": m.get("config_fingerprint"),
+        "model_system_prompt_or_policy_id": m.get("system_prompt_or_policy_id"),
+        "model_timestamp": m.get("timestamp"),
+        "input_context_fingerprint": None,
+        "output_fingerprint": None,
+        "attested_at": "2026-09-16T08:54:58Z",
+    }
+
+
+def provenanced(value):
+    if value is None:
+        return {"state": "unpopulated", "unpopulated_reason": "not supplied by the caller", "value": None}
+    return {"state": "recorded", "value": value}
+
+
+def binding_envelope(
+    evidence: dict,
+    *,
+    model: dict | None = FIXTURE_MODEL,
+    declaration: str = "model_identified",
+    hash_over: dict | None = None,
+) -> dict:
+    """A `GET .../decision-evidence` response, with REAL digests.
+
+    The digests are computed with the same function the verifier recomputes
+    with, which would be circular if that function were only ever checked
+    against itself — so it is also checked against a live server's digests in
+    `test_the_binding_recomputation_matches_a_real_server`. Here the point is
+    different: every tamper test below needs a bundle that starts out genuinely
+    consistent, or it would be asserting that a broken thing is broken.
+
+    `hash_over` records the digest of a DIFFERENT payload than the one carried,
+    which is exactly what a database UPDATE produces: the chain keeps the
+    original digest and the rebuild returns the new rows.
+    """
+    request_id, org_id = evidence["request_id"], evidence["organisation"]["id"]
+    payload = binding_payload(request_id, org_id, model=model, declaration=declaration)
+    digest = binding_event_hash(
+        MODEL_ATTESTATION_BOUND, request_id, FIXTURE_PREV_HASH, hash_over or payload
+    )
+    return {
+        "evidence_schema": "schema/decision_evidence/v1.2.0.json",
+        "canonical_evidence_sha256": "0" * 64,
+        "decision_evidence": {
+            "evidence_schema_version": "1.2.0",
+            "model": None if model is None else {k: provenanced(v) for k, v in model.items()},
+            "model_provenance": {
+                "declared_at": provenanced("2026-09-16T08:54:58Z"),
+                "as_declared_at_open": {
+                    "declaration": declaration,
+                    "no_ai_attestation": payload["no_ai_attestation"],
+                    "unidentified_reason": None,
+                    "identity": {
+                        "provider": (model or {}).get("provider"),
+                        "model_name": (model or {}).get("model_name"),
+                        "model_version": (model or {}).get("model_version"),
+                        "prompt_version": (model or {}).get("prompt_version"),
+                        "environment": (model or {}).get("environment"),
+                        "config_fingerprint": (model or {}).get("config_fingerprint"),
+                        "system_prompt_or_policy_id": (model or {}).get("system_prompt_or_policy_id"),
+                        "timestamp": (model or {}).get("timestamp"),
+                    },
+                },
+                "corrected": False,
+                "correction_count": 0,
+                "corrections": [],
+                "statement": "declared when the assessment was opened; never corrected",
+            },
+        },
+        "binding_integrity": {
+            "verdict": "INTACT",
+            "events": [
+                {
+                    "seq": 4117,
+                    "event_type": MODEL_ATTESTATION_BOUND,
+                    "ref_id": request_id,
+                    "created_at": "2026-09-16T08:55:00Z",
+                    "result": "intact",
+                    "recorded_event_hash": base64.urlsafe_b64encode(digest).decode().rstrip("="),
+                    "recomputed_event_hash": base64.urlsafe_b64encode(digest).decode().rstrip("="),
+                    "prev_hash": FIXTURE_PREV_HASH,
+                    "rebuilt_payload": payload,
+                    "detail": "",
+                }
+            ],
+        },
+    }
+
+
 def make_bundle(
     tmp_path: Path,
     *,
@@ -156,6 +293,8 @@ def make_bundle(
     with_jwks: bool = True,
     with_token: bool = True,
     with_aihoots: bool = True,
+    with_binding: bool = True,
+    binding: dict | None = None,
     signing_key=None,
     provenance: str | None = None,
     name: str = "bundle",
@@ -196,7 +335,18 @@ def make_bundle(
         if with_jwks:
             snapshot = snapshot_from_jwks(jwks, source_url=UNREACHABLE, fetched_at=AS_OF)
 
-    pack = build_pack(evidence, token=token)
+    envelope = None
+    if with_binding:
+        envelope = binding if binding is not None else binding_envelope(evidence)
+    pack = build_pack(
+        evidence,
+        token=token,
+        binding=collect_binding(
+            envelope,
+            evidence["request_id"],
+            reason="this bundle was built without a binding report, on purpose",
+        ),
+    )
 
     staging = tmp_path / f"{name}-render"
     rendered = render_and_seal(pack, staging / "case_file.pdf", created_at=AS_OF)
@@ -675,6 +825,389 @@ def test_an_altered_audit_segment_is_detected(tmp_path):
     assert statuses(report)["7"] == verifier.FAIL
 
 
+# ---------------------------------------------------------------------------
+# Binding — the third claim, and the only one that survives a database write
+#
+# `audit_chain_segment.jsonl` lets an auditor check LINKAGE: that no row was
+# removed or reordered. It cannot check that the rows a decision is JUDGED on
+# still say what was hashed, because `audit_log` stores no payload column. A
+# single UPDATE against `decision_model_attestations` rewrites the model
+# identity the sealed record serves and leaves the chain byte-identical either
+# side of it — docs/BREAK_IT_FINDINGS.md finding 4, and
+# tests/break_it/test_attack_04_model_identity_change.py against a live server.
+#
+# The tests below are the offline half of that: an examiner with the bundle,
+# no database and no network must be able to reach the same conclusions.
+# ---------------------------------------------------------------------------
+
+
+def test_the_binding_events_are_carried_as_inputs_and_not_as_a_verdict(tmp_path):
+    """The distinction the whole file rests on.
+
+    A bundle that carried Memtara's verdict and displayed it would have added
+    nothing: Memtara built the bundle, so its opinion of the bundle is not
+    evidence about it. What must travel is the material an examiner recomputes
+    from — and what must NOT travel is `result`, `recomputed_event_hash` and
+    `verdict`, because a reader who finds them will read them instead.
+    """
+    bundle = make_bundle(tmp_path)
+    raw = (bundle / BINDING_EVENTS_FILENAME).read_text()
+    events = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    assert events, "the default bundle must carry binding events"
+
+    for event in events:
+        for required in ("event_type", "ref_id", "prev_hash", "event_hash", "rebuilt_payload"):
+            assert required in event, f"{required} is an input to the digest and must travel"
+        for forbidden in ("result", "recomputed_event_hash", "verdict", "detail"):
+            assert forbidden not in event, (
+                f"{forbidden} is Memtara's conclusion about Memtara's own evidence. Carrying it "
+                "invites an examiner to read our answer instead of computing theirs"
+            )
+
+    entry = next(
+        e for e in json.loads((bundle / "MANIFEST.json").read_text())["files"]
+        if e["path"] == BINDING_EVENTS_FILENAME
+    )
+    assert "WHAT IT DOES NOT PROVE" in entry["what"], (
+        "every bundle entry says what it is for AND what it does not prove; this one is the "
+        "easiest in the pack to over-read"
+    )
+
+
+def test_an_untouched_binding_verifies_and_the_record_agrees(tmp_path):
+    """No false positive, asserted before any tamper.
+
+    A detector that fires on an untouched bundle is worse than none: it teaches
+    an operator to dismiss the one real alarm. This is also the assertion that
+    fails if the Python reconstruction of the digest ever drifts from what the
+    Rust writer hashed.
+    """
+    bundle = make_bundle(tmp_path)
+    report = run(bundle)
+    by_step = statuses(report)
+    assert by_step["7d"] == verifier.PASS
+    assert by_step["7e"] == verifier.PASS
+
+    detail = "\n".join(next(f for f in report.findings if f["step"] == "7d")["detail"])
+    assert "INTACT" in detail
+    assert "AND NOT LINKAGE" in detail, "a reader must not take 7d as a linkage result"
+    assert "does not show" in detail.lower(), "and must not take it as proof the row was true"
+
+
+def test_a_database_edit_to_the_model_row_is_caught_offline(tmp_path):
+    """Attack 4, from inside a bundle, with no database and no server.
+
+    The UPDATE rewrites the row, so a FRESH export produces a record and a
+    rebuilt payload that agree with each other — they were built from the same
+    rewritten row — and a manifest and a seal that are perfectly consistent,
+    because the attacker used Memtara's own exporter. Steps 1, 2 and 7 all pass.
+    The recorded digest is the one thing the UPDATE could not reach, and step 7d
+    is the only place that shows.
+    """
+    evidence = evidence_fixture(suitable=True)
+    swapped = dict(FIXTURE_MODEL, provider="a-different-vendor", model_name="a-different-model")
+    bundle = make_bundle(
+        tmp_path,
+        # The payload and the record carry the NEW identity; the digest still
+        # describes the old one.
+        binding=binding_envelope(
+            evidence,
+            model=swapped,
+            hash_over=binding_payload(
+                evidence["request_id"], evidence["organisation"]["id"],
+                model=FIXTURE_MODEL, declaration="model_identified",
+            ),
+        ),
+    )
+
+    report = run(bundle)
+    by_step = statuses(report)
+    assert by_step["1"] == verifier.PASS, "the bundle is internally consistent"
+    assert by_step["2"] == verifier.PASS, "and the seal covers the record it ships"
+    assert by_step["7"] == verifier.PASS, "and linkage is untouched — it always was"
+    assert by_step["7d"] == verifier.FAIL, "only the binding recomputation sees this"
+    assert by_step["7e"] == verifier.PASS, (
+        "and the cross-check correctly does NOT fire: the record and the payload agree with "
+        "each other because both were rebuilt from the same rewritten row. The two checks "
+        "answer different questions and neither is the other's summary"
+    )
+    assert report.integrity_verdict == verifier.INTEGRITY_INVALID
+    assert report.outcome_verdict == "SUITABLE", "a broken binding is not a decline"
+
+
+def test_a_bundle_whose_record_was_edited_fails_the_cross_check(tmp_path):
+    """The mirror image, and the reason step 7e exists at all.
+
+    Here nobody touched the database. Someone edited the model block in the
+    bundle's own record and left the binding file alone. Every digest in step 7d
+    still checks out — the payload was not touched — and only the comparison
+    between the record and the chain notices.
+    """
+    bundle = make_bundle(tmp_path)
+    path = bundle / "decision_evidence.json"
+    pack = json.loads(path.read_bytes())
+    pack["model_attestation"]["model"]["model_name"]["value"] = "an-entirely-different-model"
+    pack["model_attestation"]["model_provenance"]["as_declared_at_open"]["identity"]["model_name"] = (
+        "an-entirely-different-model"
+    )
+    edited = canonical_bytes(pack)
+    path.write_bytes(edited)
+
+    manifest_path = bundle / "MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    for entry in manifest["files"]:
+        if entry["path"] == "decision_evidence.json":
+            entry["sha256"] = hashlib.sha256(edited).hexdigest()
+            entry["bytes"] = len(edited)
+    manifest["canonical_evidence_sha256"] = hashlib.sha256(edited).hexdigest()
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+    report = run(bundle)
+    by_step = statuses(report)
+    assert by_step["1"] == verifier.PASS, "the manifest was updated, so step 1 cannot catch this"
+    assert by_step["7d"] == verifier.PASS, "the binding file was not touched, so it still verifies"
+    assert by_step["7e"] == verifier.FAIL
+    detail = "\n".join(next(f for f in report.findings if f["step"] == "7e")["detail"])
+    assert "chain-bound" in detail and "record says" in detail, "name the fields that differ"
+
+
+def test_the_no_ai_assertion_is_bound_and_its_escalation_is_caught(tmp_path):
+    """`model: null` is an answer, and it must not be reachable from a rewrite.
+
+    Two halves, and the second is the one that matters. A record that asserts
+    no AI participated, matching a chain-bound `no_ai_participated` declaration,
+    must verify — it is a signed statement of fact and refusing it would make
+    the field useless to the firms it was built for. And a record that asserts
+    it for a decision the chain committed to as `model_identified` must be a
+    contradiction, because that is the escalation of finding 4: one UPDATE, and
+    the strongest claim in the schema is made about a decision opened naming a
+    model.
+    """
+    evidence = evidence_fixture(suitable=True)
+
+    honest = make_bundle(
+        tmp_path,
+        name="no-ai",
+        binding=binding_envelope(evidence, model=None, declaration="no_ai_participated"),
+    )
+    report = run(honest)
+    assert statuses(report)["7d"] == verifier.PASS
+    assert statuses(report)["7e"] == verifier.PASS
+    detail = "\n".join(next(f for f in report.findings if f["step"] == "7e")["detail"])
+    assert "signed assertion that no AI participated" in detail
+
+    # The escalation: the chain bound a named model; the record now says none.
+    escalated = make_bundle(
+        tmp_path,
+        name="escalated",
+        binding=binding_envelope(
+            evidence,
+            model=None,
+            declaration="no_ai_participated",
+            hash_over=binding_payload(
+                evidence["request_id"], evidence["organisation"]["id"],
+                model=FIXTURE_MODEL, declaration="model_identified",
+            ),
+        ),
+    )
+    path = escalated / "decision_evidence.json"
+    pack = json.loads(path.read_bytes())
+    # Put the chain-bound declaration back to `model_identified` in the carried
+    # payload so the two disagree about the DECLARATION and not merely a leaf.
+    for event in pack["binding_replay"]["events"]:
+        if event["event_type"] == MODEL_ATTESTATION_BOUND:
+            event["rebuilt_payload"]["declaration"] = "model_identified"
+            event["rebuilt_payload"]["model_name"] = FIXTURE_MODEL["model_name"]
+    rewritten = canonical_bytes(pack)
+    path.write_bytes(rewritten)
+    (escalated / BINDING_EVENTS_FILENAME).write_bytes(
+        b"".join(canonical_bytes(e) + b"\n" for e in pack["binding_replay"]["events"])
+    )
+    manifest_path = escalated / "MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    for entry in manifest["files"]:
+        if entry["path"] in ("decision_evidence.json", BINDING_EVENTS_FILENAME):
+            data = (escalated / entry["path"]).read_bytes()
+            entry["sha256"], entry["bytes"] = hashlib.sha256(data).hexdigest(), len(data)
+    manifest["canonical_evidence_sha256"] = hashlib.sha256(rewritten).hexdigest()
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+    report = run(escalated)
+    assert statuses(report)["7e"] == verifier.FAIL
+    detail = "\n".join(next(f for f in report.findings if f["step"] == "7e")["detail"])
+    assert "worst shape this failure takes" in detail
+    assert "signed assertion that no AI system took part" in detail
+    assert report.integrity_verdict == verifier.INTEGRITY_INVALID
+
+
+def test_a_bundle_with_no_binding_events_is_incomplete_and_never_valid(tmp_path):
+    """An absent check is not a passed one, and this is where that bites hardest.
+
+    A bundle carrying no binding events cannot say anything about whether the
+    rows behind its decision still hold what was hashed. Reporting that as a
+    clean result would hand a firm a clean bill of health for a property it does
+    not have — the same reasoning `ReplayVerdict::Incomplete` follows on the
+    server side.
+    """
+    bundle = make_bundle(tmp_path, with_binding=False, suitable=False, with_proof=True)
+    report = run(bundle, bb_bin=stub_bb(tmp_path, 0))
+
+    assert statuses(report)["7d"] == verifier.NOT_RUN
+    assert statuses(report)["7e"] == verifier.NOT_RUN
+    assert failures(report) == [], "nothing is broken; something is unchecked"
+    assert report.integrity_verdict == verifier.INTEGRITY_INCOMPLETE
+
+    absent = {item["path"]: item for item in json.loads((bundle / "MANIFEST.json").read_text())["absent"]}
+    assert BINDING_EVENTS_FILENAME in absent
+    assert "UNCHECKED" in absent[BINDING_EVENTS_FILENAME]["reason"]
+
+    detail = "\n".join(next(f for f in report.findings if f["step"] == "7d")["detail"])
+    assert "an absent check is not a passed one" in detail
+    assert "byte-identical" in detail, "and say what step 7's PASS specifically fails to cover"
+
+
+def test_the_binding_file_must_match_the_record_it_was_extracted_from(tmp_path):
+    """The jsonl is a working copy, not a second source.
+
+    Same rule `audit_chain_segment.jsonl` follows: the record's copy is inside
+    the bytes the seal covers, so a divergence between the two means one of them
+    was edited afterwards.
+    """
+    bundle = make_bundle(tmp_path)
+    path = bundle / BINDING_EVENTS_FILENAME
+    events = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    events[0]["created_at"] = "1999-01-01T00:00:00Z"
+    payload = events[0]["rebuilt_payload"]
+    events[0]["event_hash"] = base64.urlsafe_b64encode(
+        binding_event_hash(events[0]["event_type"], events[0]["ref_id"], events[0]["prev_hash"], payload)
+    ).decode().rstrip("=")
+    path.write_bytes(b"".join(canonical_bytes(e) + b"\n" for e in events))
+
+    manifest_path = bundle / "MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    for entry in manifest["files"]:
+        if entry["path"] == BINDING_EVENTS_FILENAME:
+            data = path.read_bytes()
+            entry["sha256"], entry["bytes"] = hashlib.sha256(data).hexdigest(), len(data)
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+    report = run(bundle)
+    assert statuses(report)["7d"] == verifier.FAIL
+    detail = "\n".join(next(f for f in report.findings if f["step"] == "7d")["detail"])
+    assert "does not match binding_replay.events" in detail
+
+
+def test_a_binding_event_for_another_decision_is_not_credited(tmp_path):
+    """A valid event about the wrong assessment is still the wrong assessment.
+
+    Same reasoning as step 6's public-input binding: a valid proof over someone
+    else's inputs is a valid proof of someone else's case. An event lifted from
+    a neighbouring decision re-hashes perfectly, so nothing else in step 7d
+    would catch it.
+    """
+    bundle = make_bundle(tmp_path)
+    path = bundle / BINDING_EVENTS_FILENAME
+    events = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    stranger = "00000000-0000-4000-8000-000000000001"
+    events[0]["ref_id"] = stranger
+    events[0]["rebuilt_payload"]["request_id"] = stranger
+    events[0]["event_hash"] = base64.urlsafe_b64encode(
+        binding_event_hash(
+            events[0]["event_type"], stranger, events[0]["prev_hash"], events[0]["rebuilt_payload"]
+        )
+    ).decode().rstrip("=")
+    path.write_bytes(b"".join(canonical_bytes(e) + b"\n" for e in events))
+
+    manifest_path = bundle / "MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    for entry in manifest["files"]:
+        if entry["path"] == BINDING_EVENTS_FILENAME:
+            data = path.read_bytes()
+            entry["sha256"], entry["bytes"] = hashlib.sha256(data).hexdigest(), len(data)
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+    report = run(bundle)
+    detail = "\n".join(next(f for f in report.findings if f["step"] == "7d")["detail"])
+    assert "INTACT" in detail, "the substituted event does re-hash — that is the point"
+    assert statuses(report)["7d"] == verifier.FAIL
+    assert stranger in detail and "not this decision" in detail
+
+
+def test_the_framing_is_the_one_the_rust_writer_uses():
+    """Reproduce `audit/mod.rs::compute_event_hash` from its own definition.
+
+    Not a round-trip against this module's own output, which would pass against
+    any self-consistent construction. Each component is framed by hand here, so
+    a change to `framed`, to the ref_id encoding or to the field order fails.
+    """
+    from scripts.bundle import evidence_ops
+
+    event_type, ref_id = MODEL_ATTESTATION_BOUND, "71386234-daae-4896-91fe-4c469cf59af2"
+    prev = base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
+    payload = {"binding": "decision_model_attestation_binding/v1", "model_name": "m"}
+
+    expected = hashlib.sha256(
+        len(event_type.encode()).to_bytes(8, "big") + event_type.encode()
+        + (16).to_bytes(8, "big") + bytes.fromhex(ref_id.replace("-", ""))
+        + (32).to_bytes(8, "big") + bytes(range(32))
+        + len(canonical_bytes(payload)).to_bytes(8, "big") + canonical_bytes(payload)
+    ).digest()
+    assert binding_event_hash(event_type, ref_id, prev, payload) == expected
+
+    # The framing has to remove concatenation ambiguity, or the boundary
+    # between two adjacent fields is forgeable. Same property
+    # `audit/mod.rs::framing_prevents_concatenation_ambiguity` pins in Rust.
+    assert evidence_ops.framed(b"ab") + evidence_ops.framed(b"cd") != \
+        evidence_ops.framed(b"a") + evidence_ops.framed(b"bcd")
+    # An empty prev_hash and an absent one are the same input, and must be:
+    # the first event in the chain has no predecessor.
+    assert binding_event_hash(event_type, ref_id, None, payload) == \
+        binding_event_hash(event_type, ref_id, "", payload)
+    # A ref_id that is not a UUID is refused rather than hashed as text.
+    with pytest.raises(evidence_ops.BindingError):
+        binding_event_hash(event_type, "not-a-uuid", None, payload)
+
+
+def test_the_binding_recomputation_matches_a_real_server():
+    """The empirical check, against digests this repository did not compute.
+
+    Everything else in this file recomputes a digest with the same function that
+    produced it, which proves self-consistency and nothing else. The claim that
+    matters is cross-language: Rust hashes `serde_json::to_vec(payload)` and
+    Python must produce identical bytes from `canonical_bytes`. Those two
+    encodings genuinely differ over part of the value domain — see the five
+    divergences enumerated in backend/api/src/evidence/canonical.rs — and
+    `audit/binding.rs::guard_cross_verifier_reproducible` refuses at write time
+    to record a binding payload where they do. This asserts the guard's promise
+    holds in practice rather than taking its word for it.
+
+    The example bundle is the fixture because it was built against a live
+    server: the digests in it came out of Postgres, computed by the Rust writer.
+    """
+    example = REPO_ROOT / "scripts" / "bundle" / "example" / BINDING_EVENTS_FILENAME
+    if not example.exists():
+        pytest.skip("no example bundle checked in")
+
+    events = [json.loads(line) for line in example.read_text().splitlines() if line.strip()]
+    assert len(events) >= 2, "the example must exercise more than one binding event type"
+    assert {e["event_type"] for e in events} == {
+        MODEL_ATTESTATION_BOUND,
+        "disclosure_policy_bound",
+    }, "both binding types the server writes today must be represented"
+
+    for event in events:
+        recomputed = base64.urlsafe_b64encode(
+            binding_event_hash(
+                event["event_type"], event["ref_id"], event["prev_hash"], event["rebuilt_payload"]
+            )
+        ).decode().rstrip("=")
+        assert recomputed == event["event_hash"], (
+            f"{event['event_type']}: the bytes Python canonicalises are not the bytes the Rust "
+            "writer hashed. That is a cross-verifier divergence, not a test failure — see "
+            "evidence/canonical.rs and audit/binding.rs"
+        )
+
+
 def test_the_relying_partys_chain_is_checked_by_its_own_verifier(tmp_path):
     bundle = make_bundle(tmp_path)
     if not (bundle / "tools/aihoots_reference/src/verifier/cli.py").exists():
@@ -756,29 +1289,44 @@ def test_verify_md_scopes_independence_to_one_circuit(tmp_path):
 
 
 def test_the_checkpoint_slot_is_reserved_and_the_gap_is_stated(tmp_path):
-    """The terminal row of the chain is unprotected. Say so, and leave a socket for the fix.
+    """The terminal row of this bundle's segment is unprotected. Say so, exactly.
 
     Reported as INFO, not NOT RUN, on purpose: a check that no bundle in
     existence can satisfy would make every bundle INCOMPLETE forever, which
     would empty that word of meaning and bury the NOT RUNs that are genuinely
     about the pack in front of you.
+
+    The wording carries a distinction that is easy to lose and expensive to
+    lose: checkpoints EXIST now (`audit/checkpoint.rs`, and
+    `GET /orgs/:id/audit-chain/checkpoint`), and this builder simply does not
+    fetch one. "No deployment produces one" would have been a false statement
+    about the product, made by the tool an examiner is most likely to believe.
     """
     bundle = make_bundle(tmp_path)
     absent = {item["path"]: item for item in json.loads((bundle / "MANIFEST.json").read_text())["absent"]}
     assert "audit_chain_checkpoint.json" in absent
-    assert "followed" in absent["audit_chain_checkpoint.json"]["reason"].lower()
+    reason = absent["audit_chain_checkpoint.json"]["reason"]
+    assert "followed" in reason.lower()
+    assert "or covered by a signed checkpoint" in reason, (
+        "the sentence describing what a chain protects must name both mechanisms"
+    )
+    assert "not about the deployment" in reason
 
     report = run(bundle)
     step_7c = next(f for f in report.findings if f["step"] == "7c")
     assert step_7c["status"] == verifier.INFO
     assert step_7c["bears_on_integrity"] is False
     detail = "\n".join(step_7c["detail"])
-    assert "WHAT IS THEREFORE UNPROTECTED" in detail
-    assert "WHAT THE CHECKPOINT WILL ADD" in detail
+    assert "WHAT IS THEREFORE UNPROTECTED HERE" in detail
+    assert "WHAT A CHECKPOINT ADDS" in detail
     assert "never written" in detail, "the checkpoint's own limit must be stated too"
+    assert "necessarily made AFTER the events it pins" in detail, (
+        "and so must the residual window: a checkpoint cannot cover a row that did not exist "
+        "when it was signed, so the newest rows are always briefly covered by neither mechanism"
+    )
 
     step_7 = "\n".join(next(f for f in report.findings if f["step"] == "7")["detail"])
-    assert "FOLLOWED by another record" in step_7
+    assert "FOLLOWED by another record, OR covered by a signed checkpoint" in step_7
 
 
 def test_a_checkpoint_file_is_not_credited_by_a_verifier_that_cannot_check_it(tmp_path):

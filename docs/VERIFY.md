@@ -50,6 +50,7 @@ result means, which the script cannot decide for you.
 | `proof/` | The mathematical proof, and the public values it was checked against. |
 | `vkey/` | The key the proof is checked with, as published by Memtara. |
 | `audit_chain_segment.jsonl` | This decision's entries from Memtara's tamper-evident log. |
+| `audit_binding_events.jsonl` | The entries that commit to the **contents** of the rows this decision is judged on — the model that was declared, and the policy it was measured against — each with the details it fingerprinted. This is the only file in the bundle whose fingerprints you can recompute yourself. See step 7d. |
 | `institution_and_thresholds.json` | Who the firm is, and the thresholds this assessment was measured against. |
 | `aihoots_audit_chain.jsonl` | The relying party's own independent log, if one was supplied. |
 | `audit_chain_checkpoint.json` | A signed commitment to where the log had got to. Reserved — see step 7c; no bundle carries one yet. |
@@ -244,28 +245,48 @@ never written in the first place. Retention and off-site copies remain the
 firm's obligation and are not evidenced here.
 
 **Exactly which records are protected, and which are not.** A hash chain
-protects **every record that has been followed by another record**. The
-protection comes from the follower: the next entry carries the previous
-entry's fingerprint, so changing an earlier record breaks every link after it.
+protects **every record that has been followed by another record, or covered
+by a signed checkpoint**. The ordinary protection comes from the follower: the
+next entry carries the previous entry's fingerprint, so changing an earlier
+record breaks every link after it. The newest record has no follower, so
+nothing inside the chain commits to it, and Memtara's log stores a fingerprint
+of each event's details but not the details themselves — so the last row
+cannot be recomputed from its own contents either. Something outside the chain
+has to cover it, and that is what a checkpoint is.
 
-The consequence is that the **newest record in the chain is protected by
-nothing at all.** Nothing has followed it yet, so nothing commits to it. In
-Memtara's log this is worse than in an ordinary chain, because the log stores
-a fingerprint of each event's details but not the details themselves — so the
-last row cannot be recomputed from its own contents either. If the most recent
-event in `audit_chain_segment.jsonl` matters to your conclusion, treat it as
-unevidenced.
+**The checkpoint, and the window it does not close.** Memtara's deployment
+signs periodic checkpoints over the head of the log: a statement, signed with
+the issuer's key and published independently of any bundle, that the chain
+head was at a named position with a named fingerprint at a named time, and
+that a named number of rows sat at or below it. That last count is what makes
+truncation detectable as well as alteration — chopping rows off the end leaves
+a prefix that is still internally consistent, and only a count over the whole
+covered range catches it.
 
-**What the forthcoming checkpoint adds.** A signed chain-head checkpoint is
-being built: a statement, signed and published independently of any single
-bundle, that the chain head was at a named position at a named time. Once a
-bundle carries one (reserved filename `audit_chain_checkpoint.json`, reported
-at step 7c), the terminal row stops being unprotected — anything appended,
-altered or dropped after the checkpoint becomes detectable, because the
-checkpoint pins where the chain had got to. Note what it still will not do: a
-checkpoint cannot show that an event which was **never written** should have
-been. Until a bundle carries one, step 7c reports the gap rather than staying
-silent about it.
+Read the residual plainly, because it is not zero. **A checkpoint is
+necessarily made after the events it pins.** Between the head moving and the
+next checkpoint being signed, the newest rows are covered by neither mechanism:
+nothing follows them yet, and no signature reaches them yet. That window is the
+checkpointing interval, and it is a configured value, not a hidden one — the
+defaults are 60 seconds or 64 events, whichever comes first
+(`MEMTARA_AUDIT_CHECKPOINT_INTERVAL_SECONDS`, `MEMTARA_AUDIT_CHECKPOINT_MAX_EVENTS`),
+and a checkpoint can also be requested on demand, which is what anyone should
+do immediately before an export or a dispute. Ask the firm for the interval its
+deployment runs at; the answer is the length of time its newest decision spends
+unprotected.
+
+Note what a checkpoint still does not do: it cannot show that an event which
+was **never written** should have been.
+
+**What this bundle carries.** The reserved filename is
+`audit_chain_checkpoint.json` and step 7c is where it is reported. Today the
+builder does not yet fetch one, so step 7c reports its absence and the
+consequence rather than staying silent about it. Do not read step 7c's INFO
+status as a statement that no checkpoint exists for this log — it means this
+bundle does not carry one. If the terminal event in
+`audit_chain_segment.jsonl` matters to your conclusion, ask the firm for the
+checkpoint that covers it (`GET /orgs/:id/audit-chain/checkpoint`) and check
+it against the issuer key you already have from step 8.
 
 **On Memtara's own segment, be careful what you conclude.** Two limitations,
 both structural:
@@ -283,6 +304,132 @@ Anyone who tells you this segment independently proves what happened is
 overstating it. What it does prove, if you later obtain the full log from the
 firm, is *where* these events sat in history — which is enough to catch an
 event that was inserted or reordered afterwards.
+
+---
+
+## Step 7d — Do the rows still say what was fingerprinted?
+
+**This is a different question from step 7, and mixing them up is the most
+expensive mistake available in this document.** There are three separate claims
+about Memtara's log, and an intact result on one says nothing about the others:
+
+| Claim | What it means | Where it is checked |
+|---|---|---|
+| **Linkage** | No record was removed, reordered or altered *within the log*. | Step 7, and the full-log walk the firm runs with database access. |
+| **Head** | The newest record, which nothing in the log follows, is committed to from outside the log. | Step 7c, via a signed checkpoint. |
+| **Binding** | The **mutable rows this decision is judged on still say what was fingerprinted** — the model that was declared, and the policy it was measured against. | **This step, and nothing else.** |
+
+Only the third survives someone editing the firm's database directly. The
+model a decision was recorded against lives in an ordinary table row, and until
+binding events existed, a single `UPDATE` rewrote the identity the sealed
+record served while leaving the log **byte-identical** before and after. Not a
+log that failed to notice — there was nothing in it to notice with. If you take
+a PASS at step 7 as evidence that a decision's model identity is intact, you
+are making exactly that mistake.
+
+**What this step does.** `audit_binding_events.jsonl` carries, for each such
+record, the fingerprint the log stores *and* the details that fingerprint was
+taken over, rebuilt from the rows as they stood when the bundle was built. The
+script recomputes the fingerprint and compares. Memtara's own verdict is
+deliberately **not** in the bundle: Memtara built the bundle, so its opinion of
+the bundle is not evidence about it. You are given the inputs so that you
+compute the answer.
+
+By hand, for one event:
+
+```
+python3 -c "
+import base64, hashlib, json, uuid
+e = json.loads(open('audit_binding_events.jsonl').readline())
+def framed(b): return len(b).to_bytes(8,'big') + b
+def unb64(s): return base64.urlsafe_b64decode(s + '=' * (-len(s) % 4)) if s else b''
+h = hashlib.sha256()
+h.update(framed(e['event_type'].encode()))
+h.update(framed(uuid.UUID(e['ref_id']).bytes if e['ref_id'] else b''))
+h.update(framed(unb64(e['prev_hash'])))
+h.update(framed(json.dumps(e['rebuilt_payload'], sort_keys=True, separators=(',',':')).encode()))
+print('recomputed', base64.urlsafe_b64encode(h.digest()).decode().rstrip('='))
+print('recorded  ', e['event_hash'])
+"
+```
+
+The four parts are fingerprinted with an 8-byte length in front of each, so
+that the boundary between two of them cannot be shifted. `ref_id` is the
+identifier's 16 raw bytes, not its printed form. `prev_hash` is the raw
+fingerprint bytes, and empty for the first record in the whole log. The details
+are serialised with sorted keys and no spare whitespace — the same rule as the
+digest in step 2, so there is one convention in this bundle and not two.
+
+**A PASS means:** the rows behind this decision still contain what they
+contained when the record was fingerprinted. Nobody has edited the declared
+model identity or the policy since.
+
+**A PASS does NOT mean those rows were true when they were written.** The model
+attestation is a *forward declaration*: it is recorded when the assessment is
+opened, before the client's device has proved anything, before a verdict exists
+and before any human has reviewed it. No fingerprint can reach back and check
+it. Compare `model_provenance.declared_at` in the record against
+`decision.timestamps.assessed_at` and see the gap for yourself. A firm that
+later discovers it named the wrong model files a correction, which appears in
+the record as an extra entry rather than as an edit.
+
+**A PASS here is also not a PASS on linkage.** Each record is re-fingerprinted
+against the previous fingerprint *it carries*, so a whole run of records
+rewritten consistently would pass here and fail step 7. The two checks are
+complements. Neither is a summary of the other.
+
+**If it reports NOT RUN:** this bundle carries no binding events — either it
+was built before they existed, or the builder could not reach the endpoint they
+come from. Do not read that as a clean result. An absent check is not a passed
+one, and everything above about a single `UPDATE` applies in full.
+
+**If it FAILS:** the details in the bundle do not fingerprint to the value the
+log recorded. Either the rows changed after the record was written, or this
+file was edited after the bundle was built. Both are findings. Note that step 7
+will very likely still PASS — that is the point of this check existing.
+
+---
+
+## Step 7e — Does the record agree with the log about the model?
+
+Step 7d proves the details in `audit_binding_events.jsonl` fingerprint to the
+value beside them. It says nothing about whether `decision_evidence.json`, the
+record you would actually quote in a report, tells the same story. Someone
+holding only the bundle can edit the model block in the record and leave the
+binding file alone: every fingerprint in step 7d still checks out.
+
+This step compares the two. It needs no database, no network and nothing from
+Memtara.
+
+**The comparison is against the declaration as it was made when the assessment
+opened**, which the record preserves verbatim at
+`model_attestation.model_provenance.as_declared_at_open`. That is the row the
+log actually committed to. The model block the record *serves* is compared too,
+except where a correction has been filed — a correction legitimately changes
+what the record serves, and reporting that as tampering would be crying wolf on
+the one path a firm has to correct itself honestly.
+
+**`model: null` is treated as its own answer and never blurs into "no model
+named".** It is a signed statement, inside the sealed bytes, that **no AI
+system participated in this decision**. It is not a blank, and it is not the
+same as an AI nobody could identify. If the record makes that statement for a
+decision whose logged declaration names a model, this step reports a
+contradiction — that is the worst shape this failure takes and the one to look
+for first.
+
+**A PASS means:** the model identity in the record is the identity the log
+committed to when the decision was opened. Neither side was edited to agree
+with the other.
+
+**A PASS does NOT mean the identity is correct.** It is the firm's own
+declaration about its own software, and nothing in this bundle can check it
+against the model that actually ran.
+
+**If it reports NOT RUN:** the bundle carries no usable model binding, or no
+model block to compare it against. The record's model block — whatever it says,
+including a `null` — then rests on the seal alone. The seal shows it was not
+edited since export. It cannot show it agrees with what was fingerprinted when
+the decision was opened.
 
 ---
 

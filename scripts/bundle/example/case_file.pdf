@@ -4,7 +4,7 @@
 << /Type /Catalog /Pages 2 0 R >>
 endobj
 2 0 obj
-<< /Type /Pages /Kids [7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R 19 0 R 21 0 R 23 0 R 25 0 R] /Count 10 >>
+<< /Type /Pages /Kids [7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R 19 0 R 21 0 R 23 0 R 25 0 R 27 0 R 29 0 R 31 0 R] /Count 13 >>
 endobj
 3 0 obj
 << /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>
@@ -16,18 +16,18 @@ endobj
 << /Type /Font /Subtype /Type1 /BaseFont /Courier-Oblique /Encoding /WinAnsiEncoding >>
 endobj
 6 0 obj
-<< /Title (Canonical Case File - structured-product suitability) /Subject (Assessment 71386234-daae-4896-91fe-4c469cf59af2 - DIFC Wealth Partners \(DEMONSTRATION FIRM\) - instrument XS2500000018 - verdict NOT SUITABLE) /Producer (memtara scripts/pdf.py) /CreationDate (D:20260819092331+00'00') /ModDate (D:20260819092331+00'00') >>
+<< /Title (Canonical Case File - structured-product suitability) /Subject (Assessment 03698737-9f9c-425c-b893-3a5c0bfadcce - DIFC Wealth Partners 236296 - instrument XS2500000018 - verdict NOT SUITABLE) /Producer (memtara scripts/pdf.py) /CreationDate (D:20260819203228+00'00') /ModDate (D:20260819203228+00'00') >>
 endobj
 7 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 8 0 R >>
 endobj
 8 0 obj
-<< /Length 4448 >>
+<< /Length 4408 >>
 stream
 BT /F2 18 Tf 56 772.39 Td (Canonical Case File - structured-product) Tj ET
 BT /F2 18 Tf 56 748.99 Td (suitability) Tj ET
-BT /F3 10 Tf 56 729.59 Td (Assessment 71386234-daae-4896-91fe-4c469cf59af2 - DIFC Wealth Partners) Tj ET
-BT /F3 10 Tf 56 716.59 Td (\(DEMONSTRATION FIRM\) - instrument XS2500000018 - verdict NOT SUITABLE) Tj ET
+BT /F3 10 Tf 56 729.59 Td (Assessment 03698737-9f9c-425c-b893-3a5c0bfadcce - DIFC Wealth Partners 236296 -) Tj ET
+BT /F3 10 Tf 56 716.59 Td (instrument XS2500000018 - verdict NOT SUITABLE) Tj ET
 0.55 G 0.6 w 56 705.09 m 539.28 705.09 l S
 BT /F1 10 Tf 56 683.59 Td (This is the complete record of one structured-product suitability assessment:) Tj ET
 BT /F1 10 Tf 56 670.59 Td (who was assessed, against whose terms, what the zero-knowledge circuit answered,) Tj ET
@@ -35,8 +35,8 @@ BT /F1 10 Tf 56 657.59 Td (where that answer is recorded in two independent audi
 BT /F1 10 Tf 56 644.59 Td (regulatory obligations it bears on. It is assembled from a single call to the) Tj ET
 BT /F1 10 Tf 56 631.59 Td (issuing server's evidence endpoint and, where supplied, the relying party's own) Tj ET
 BT /F1 10 Tf 56 618.59 Td (audit log.) Tj ET
-BT /F1 8 Tf 56 603.09 Td (  Assessment      71386234-daae-4896-91fe-4c469cf59af2) Tj ET
-BT /F1 8 Tf 56 593.59 Td (  Firm            DIFC Wealth Partners \(DEMONSTRATION FIRM\)) Tj ET
+BT /F1 8 Tf 56 603.09 Td (  Assessment      03698737-9f9c-425c-b893-3a5c0bfadcce) Tj ET
+BT /F1 8 Tf 56 593.59 Td (  Firm            DIFC Wealth Partners 236296) Tj ET
 BT /F1 8 Tf 56 584.09 Td (  Instrument      XS2500000018  5-year USD capital-protected note \(DIFC-distributed\)) Tj ET
 BT /F1 8 Tf 56 574.59 Td (  VERDICT         NOT SUITABLE) Tj ET
 BT /F1 10 Tf 56 559.59 Td (Read section 2 before acting on the verdict. The single most consequential) Tj ET
@@ -55,19 +55,19 @@ BT /F1 10 Tf 56 404.59 Td (- Section 5, cryptographic seal - what it is, and wha
 BT /F2 16 Tf 56 359.09 Td (1. Client and product metadata) Tj ET
 BT /F2 12.5 Tf 56 327.92 Td (1a. The subject) Tj ET
 BT /F2 10 Tf 56 310.54 Td (Client reference) Tj ET
-BT /F1 10 Tf 164 310.54 Td (97042d32-ab91-461b-9bae-9e0c62c99448) Tj ET
+BT /F1 10 Tf 164 310.54 Td (8fbb731c-78df-4081-8759-98bb9bc2d901) Tj ET
 BT /F2 10 Tf 56 297.54 Td (Assessment) Tj ET
-BT /F1 10 Tf 164 297.54 Td (71386234-daae-4896-91fe-4c469cf59af2) Tj ET
+BT /F1 10 Tf 164 297.54 Td (03698737-9f9c-425c-b893-3a5c0bfadcce) Tj ET
 BT /F2 10 Tf 56 284.54 Td (Circuit) Tj ET
 BT /F1 10 Tf 164 284.54 Td (wealth_suitability) Tj ET
 BT /F2 10 Tf 56 271.54 Td (Request status) Tj ET
-BT /F1 10 Tf 164 271.54 Td (verified) Tj ET
+BT /F1 10 Tf 164 271.54 Td (fulfilled) Tj ET
 BT /F2 10 Tf 56 258.54 Td (Opened at) Tj ET
-BT /F1 10 Tf 164 258.54 Td (2026-09-16T08:55:00Z) Tj ET
+BT /F1 10 Tf 164 258.54 Td (2026-08-19T20:32:27.161863Z) Tj ET
 BT /F2 10 Tf 56 245.54 Td (Firm) Tj ET
-BT /F1 10 Tf 164 245.54 Td (DIFC Wealth Partners \(DEMONSTRATION FIRM\) \(bank\)) Tj ET
+BT /F1 10 Tf 164 245.54 Td (DIFC Wealth Partners 236296 \(bank\)) Tj ET
 BT /F2 10 Tf 56 232.54 Td (Firm id) Tj ET
-BT /F1 10 Tf 164 232.54 Td (5c1d8e2f-7a90-4b1c-8d3e-2f4a6b8c0d1e) Tj ET
+BT /F1 10 Tf 164 232.54 Td (cf45c9bb-3968-4306-a3b6-377e2a5518f2) Tj ET
 BT /F1 10 Tf 56 215.54 Td (The subject is identified by the UUID above and by nothing else. Memtara holds) Tj ET
 BT /F1 10 Tf 56 202.54 Td (no name for this person, so none appears here; the firm resolves the UUID) Tj ET
 BT /F1 10 Tf 56 189.54 Td (against its own client records.) Tj ET
@@ -79,16 +79,16 @@ BT /F1 10 Tf 56 100.29 Td (Memtara holds no annual income figure, no liquid-asse
 BT /F1 10 Tf 56 87.29 Td (risk-tolerance score and no existing-holdings value for this subject. It never) Tj ET
 BT /F1 10 Tf 56 74.29 Td (did. The four limbs of the assessment were evaluated inside a zero-knowledge) Tj ET
 0.55 G 0.6 w 56 42 m 539.28 42 l S
-BT /F1 8 Tf 268.84 30 Td (Page 1 of 10) Tj ET
+BT /F1 8 Tf 268.84 30 Td (Page 1 of 13) Tj ET
 endstream
 endobj
 9 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 10 0 R >>
 endobj
 10 0 obj
-<< /Length 5354 >>
+<< /Length 5537 >>
 stream
-BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 71386234-daae-4896-91fe-4c469cf59af2 - not an AdES signature) Tj ET
+BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 03698737-9f9c-425c-b893-3a5c0bfadcce - not an AdES signature) Tj ET
 0.55 G 0.6 w 56 795.89 m 539.28 795.89 l S
 BT /F1 10 Tf 56 778.39 Td (circuit on the holder's own device; the figures were private witnesses to that) Tj ET
 BT /F1 10 Tf 56 765.39 Td (computation and were not transmitted. What crossed the wire was a proof and) Tj ET
@@ -104,70 +104,72 @@ BT /F2 10 Tf 56 640.39 Td (Attributes disclosed) Tj ET
 BT /F1 10 Tf 188 640.39 Td (none \(the verdict is not an attribute\)) Tj ET
 BT /F2 10 Tf 56 627.39 Td (Issuer's own note) Tj ET
 BT /F1 10 Tf 188 627.39 Td (Memtara holds no income, liquidity, risk-tolerance or) Tj ET
-BT /F1 10 Tf 188 614.39 Td (holdings figure for this subject.) Tj ET
-BT /F2 12.5 Tf 56 585.51 Td (1c. The instrument) Tj ET
-BT /F2 10 Tf 56 568.14 Td (ISIN) Tj ET
-BT /F1 10 Tf 134 568.14 Td (XS2500000018) Tj ET
-BT /F2 10 Tf 56 555.14 Td (Name) Tj ET
-BT /F1 10 Tf 134 555.14 Td (5-year USD capital-protected note \(DIFC-distributed\)) Tj ET
-BT /F2 10 Tf 56 542.14 Td (Registry id) Tj ET
-BT /F1 10 Tf 134 542.14 Td (3fa85f64-5717-4562-b3fc-2c963f66afa6) Tj ET
-BT /F1 10 Tf 56 525.14 Td (product_ref is the digest of the ISIN that the circuit actually consumed as) Tj ET
-BT /F1 10 Tf 56 512.14 Td (public input 3. It is what binds this proof to this instrument; an ISIN printed) Tj ET
-BT /F1 10 Tf 56 499.14 Td (on a report binds nothing.) Tj ET
-BT /F1 8 Tf 56 483.64 Td (  product_ref  0x2b7e151628aed2a6abf7158809cf4f3c762e7160f38b4da56a784d9045190cfe) Tj ET
-BT /F2 12.5 Tf 56 456.76 Td (1d. The terms assessed against) Tj ET
-BT /F2 9 Tf 56 440.14 Td (Term) Tj ET
-BT /F2 9 Tf 239.6 440.14 Td (Value) Tj ET
-BT /F2 9 Tf 288.2 440.14 Td (Public input) Tj ET
-0.55 G 0.6 w 56 433.39 m 539.28 433.39 l S
-BT /F1 9 Tf 56 421.64 Td (Minimum annual income) Tj ET
-BT /F1 9 Tf 239.6 421.64 Td (500000) Tj ET
-BT /F1 9 Tf 288.2 421.64 Td (4 min_income) Tj ET
-BT /F1 9 Tf 56 410.14 Td (Minimum liquid assets) Tj ET
-BT /F1 9 Tf 239.6 410.14 Td (1000000) Tj ET
-BT /F1 9 Tf 288.2 410.14 Td (5 min_liquidity) Tj ET
-BT /F1 9 Tf 56 398.64 Td (Maximum post-trade concentration) Tj ET
-BT /F1 9 Tf 239.6 398.64 Td (30%) Tj ET
-BT /F1 9 Tf 288.2 398.64 Td (6 max_concentration_percent) Tj ET
-BT /F1 9 Tf 56 387.14 Td (Product risk level) Tj ET
-BT /F1 9 Tf 239.6 387.14 Td (3) Tj ET
-BT /F1 9 Tf 288.2 387.14 Td (7 product_risk_level) Tj ET
-BT /F2 10 Tf 56 368.89 Td (Provenance) Tj ET
-BT /F1 10 Tf 128 368.89 Td (product registry, snapshotted when the assessment was opened) Tj ET
-BT /F1 10 Tf 56 351.89 Td (The provenance line is the load-bearing part of this subsection. These four) Tj ET
-BT /F1 10 Tf 56 338.89 Td (numbers are the firm's, they come from the product registry, and they were) Tj ET
-BT /F1 10 Tf 56 325.89 Td (snapshotted into the assessment when it was opened - before the client was asked) Tj ET
-BT /F1 10 Tf 56 312.89 Td (anything. The snapshot matters: amending the product tomorrow does not change) Tj ET
-BT /F1 10 Tf 56 299.89 Td (what this proof was measured against.) Tj ET
-BT /F1 10 Tf 56 282.89 Td (Every value of these thresholds yields a valid proof. A client who could choose) Tj ET
-BT /F1 10 Tf 56 269.89 Td (its own minimum income could prove itself suitable for anything, with) Tj ET
-BT /F1 10 Tf 56 256.89 Td (cryptography that checks out perfectly. What makes the verdict mean what the) Tj ET
-BT /F1 10 Tf 56 243.89 Td (firm thinks it means is the server's comparison of each submitted public input) Tj ET
-BT /F1 10 Tf 56 230.89 Td (against the terms above, not the proof.) Tj ET
-BT /F2 12.5 Tf 56 202.01 Td (1e. The assessment window) Tj ET
-BT /F2 10 Tf 56 184.64 Td (Window opens) Tj ET
-BT /F1 10 Tf 146 184.64 Td (2026-09-16T08:55:00Z) Tj ET
-BT /F2 10 Tf 56 171.64 Td (Window closes) Tj ET
-BT /F1 10 Tf 146 171.64 Td (2026-09-16T09:10:00Z) Tj ET
-BT /F2 10 Tf 56 158.64 Td (Grant expires) Tj ET
-BT /F1 10 Tf 146 158.64 Td (2026-09-16T09:10:00Z) Tj ET
-BT /F1 10 Tf 56 141.64 Td (The window is enforced inside the circuit, not only by the server: public input) Tj ET
-BT /F1 10 Tf 56 128.64 Td (0 must fall within it. The nonce below is single-use and was issued when the) Tj ET
-BT /F1 10 Tf 56 115.64 Td (assessment was opened, which is what prevents a verdict being back-dated onto a) Tj ET
-BT /F1 10 Tf 56 102.64 Td (recommendation that had already been made.) Tj ET
-BT /F1 8 Tf 56 87.14 Td (  nonce  0x0f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08) Tj ET
+BT /F1 10 Tf 188 614.39 Td (holdings figure for this subject. The assessment was) Tj ET
+BT /F1 10 Tf 188 601.39 Td (computed on the holder's device and only its one-bit) Tj ET
+BT /F1 10 Tf 188 588.39 Td (result was disclosed.) Tj ET
+BT /F2 12.5 Tf 56 559.51 Td (1c. The instrument) Tj ET
+BT /F2 10 Tf 56 542.14 Td (ISIN) Tj ET
+BT /F1 10 Tf 134 542.14 Td (XS2500000018) Tj ET
+BT /F2 10 Tf 56 529.14 Td (Name) Tj ET
+BT /F1 10 Tf 134 529.14 Td (5-year USD capital-protected note \(DIFC-distributed\)) Tj ET
+BT /F2 10 Tf 56 516.14 Td (Registry id) Tj ET
+BT /F1 10 Tf 134 516.14 Td (30528657-dc6e-4aad-9586-877259bf8b7e) Tj ET
+BT /F1 10 Tf 56 499.14 Td (product_ref is the digest of the ISIN that the circuit actually consumed as) Tj ET
+BT /F1 10 Tf 56 486.14 Td (public input 3. It is what binds this proof to this instrument; an ISIN printed) Tj ET
+BT /F1 10 Tf 56 473.14 Td (on a report binds nothing.) Tj ET
+BT /F1 8 Tf 56 457.64 Td (  product_ref  0x00378d5af8ed32697c80a9283e5d431bf8adcdea64e505f00af918097ca3af97) Tj ET
+BT /F2 12.5 Tf 56 430.76 Td (1d. The terms assessed against) Tj ET
+BT /F2 9 Tf 56 414.14 Td (Term) Tj ET
+BT /F2 9 Tf 239.6 414.14 Td (Value) Tj ET
+BT /F2 9 Tf 288.2 414.14 Td (Public input) Tj ET
+0.55 G 0.6 w 56 407.39 m 539.28 407.39 l S
+BT /F1 9 Tf 56 395.64 Td (Minimum annual income) Tj ET
+BT /F1 9 Tf 239.6 395.64 Td (500000) Tj ET
+BT /F1 9 Tf 288.2 395.64 Td (4 min_income) Tj ET
+BT /F1 9 Tf 56 384.14 Td (Minimum liquid assets) Tj ET
+BT /F1 9 Tf 239.6 384.14 Td (1000000) Tj ET
+BT /F1 9 Tf 288.2 384.14 Td (5 min_liquidity) Tj ET
+BT /F1 9 Tf 56 372.64 Td (Maximum post-trade concentration) Tj ET
+BT /F1 9 Tf 239.6 372.64 Td (30%) Tj ET
+BT /F1 9 Tf 288.2 372.64 Td (6 max_concentration_percent) Tj ET
+BT /F1 9 Tf 56 361.14 Td (Product risk level) Tj ET
+BT /F1 9 Tf 239.6 361.14 Td (3) Tj ET
+BT /F1 9 Tf 288.2 361.14 Td (7 product_risk_level) Tj ET
+BT /F2 10 Tf 56 342.89 Td (Provenance) Tj ET
+BT /F1 10 Tf 128 342.89 Td (product registry, snapshotted when the assessment was opened) Tj ET
+BT /F1 10 Tf 56 325.89 Td (The provenance line is the load-bearing part of this subsection. These four) Tj ET
+BT /F1 10 Tf 56 312.89 Td (numbers are the firm's, they come from the product registry, and they were) Tj ET
+BT /F1 10 Tf 56 299.89 Td (snapshotted into the assessment when it was opened - before the client was asked) Tj ET
+BT /F1 10 Tf 56 286.89 Td (anything. The snapshot matters: amending the product tomorrow does not change) Tj ET
+BT /F1 10 Tf 56 273.89 Td (what this proof was measured against.) Tj ET
+BT /F1 10 Tf 56 256.89 Td (Every value of these thresholds yields a valid proof. A client who could choose) Tj ET
+BT /F1 10 Tf 56 243.89 Td (its own minimum income could prove itself suitable for anything, with) Tj ET
+BT /F1 10 Tf 56 230.89 Td (cryptography that checks out perfectly. What makes the verdict mean what the) Tj ET
+BT /F1 10 Tf 56 217.89 Td (firm thinks it means is the server's comparison of each submitted public input) Tj ET
+BT /F1 10 Tf 56 204.89 Td (against the terms above, not the proof.) Tj ET
+BT /F2 12.5 Tf 56 176.01 Td (1e. The assessment window) Tj ET
+BT /F2 10 Tf 56 158.64 Td (Window opens) Tj ET
+BT /F1 10 Tf 146 158.64 Td (2026-08-19T20:32:26.731715Z) Tj ET
+BT /F2 10 Tf 56 145.64 Td (Window closes) Tj ET
+BT /F1 10 Tf 146 145.64 Td (2026-08-19T20:47:26.731715Z) Tj ET
+BT /F2 10 Tf 56 132.64 Td (Grant expires) Tj ET
+BT /F1 10 Tf 146 132.64 Td (2026-08-19T20:47:26.731715Z) Tj ET
+BT /F1 10 Tf 56 115.64 Td (The window is enforced inside the circuit, not only by the server: public input) Tj ET
+BT /F1 10 Tf 56 102.64 Td (0 must fall within it. The nonce below is single-use and was issued when the) Tj ET
+BT /F1 10 Tf 56 89.64 Td (assessment was opened, which is what prevents a verdict being back-dated onto a) Tj ET
+BT /F1 10 Tf 56 76.64 Td (recommendation that had already been made.) Tj ET
+BT /F1 8 Tf 56 61.14 Td (  nonce  0x00deb096d1a3a80abc5c87ff140d76c584b288e35c6522de5c4120b0360f52e4) Tj ET
 0.55 G 0.6 w 56 42 m 539.28 42 l S
-BT /F1 8 Tf 268.84 30 Td (Page 2 of 10) Tj ET
+BT /F1 8 Tf 268.84 30 Td (Page 2 of 13) Tj ET
 endstream
 endobj
 11 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 12 0 R >>
 endobj
 12 0 obj
-<< /Length 6532 >>
+<< /Length 6469 >>
 stream
-BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 71386234-daae-4896-91fe-4c469cf59af2 - not an AdES signature) Tj ET
+BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 03698737-9f9c-425c-b893-3a5c0bfadcce - not an AdES signature) Tj ET
 0.55 G 0.6 w 56 795.89 m 539.28 795.89 l S
 BT /F2 16 Tf 56 759.89 Td (2. Zero-knowledge proof verification receipt) Tj ET
 BT /F2 12.5 Tf 56 728.72 Td (2a. The verification key) Tj ET
@@ -181,184 +183,191 @@ BT /F1 8 Tf 56 641.34 Td (  published at      circuits/wealth_suitability/vkey/v
 BT /F2 12.5 Tf 56 614.47 Td (2b. Proof attempts) Tj ET
 BT /F2 9 Tf 56 597.84 Td (#) Tj ET
 BT /F2 9 Tf 72.2 597.84 Td (Verified at) Tj ET
-BT /F2 9 Tf 191 597.84 Td (bb verify) Tj ET
-BT /F2 9 Tf 250.4 597.84 Td (Proof bytes) Tj ET
-BT /F2 9 Tf 320.6 597.84 Td (Proof id) Tj ET
+BT /F2 9 Tf 228.8 597.84 Td (bb verify) Tj ET
+BT /F2 9 Tf 288.2 597.84 Td (Proof bytes) Tj ET
+BT /F2 9 Tf 358.4 597.84 Td (Proof id) Tj ET
 0.55 G 0.6 w 56 591.09 m 539.28 591.09 l S
 BT /F1 9 Tf 56 579.34 Td (1) Tj ET
-BT /F1 9 Tf 72.2 579.34 Td (2026-09-16T09:00:41Z) Tj ET
-BT /F1 9 Tf 191 579.34 Td (accepted) Tj ET
-BT /F1 9 Tf 250.4 579.34 Td (14656) Tj ET
-BT /F1 9 Tf 320.6 579.34 Td (7c9e6679-7425-40de-944b-e07fc1f90ae7) Tj ET
-BT /F1 10 Tf 56 561.09 Td (Every attempt is listed, accepted and rejected alike. A pack that showed only) Tj ET
-BT /F1 10 Tf 56 548.09 Td (the accepted proof would hide the pattern a reviewer is looking for.) Tj ET
-BT /F1 8 Tf 56 532.59 Td (  attempt 1  accepted) Tj ET
-BT /F1 8 Tf 56 523.09 Td (    proof SHA-256  5a918a2496fc74d3089e97dc8d49e27e5454cd5e92cbfbbf78cc6388e172ab81) Tj ET
-BT /F1 10 Tf 56 508.09 Td (No submitted proof was rejected by bb verify.) Tj ET
-BT /F2 12.5 Tf 56 479.22 Td (2c. The public inputs, in circuit order) Tj ET
-BT /F1 10 Tf 56 461.84 Td (From the accepted proof. Order is a protocol detail no client can guess and) Tj ET
-BT /F1 10 Tf 56 448.84 Td (getting it wrong produces a proof that fails verification with no clue why - so) Tj ET
-BT /F1 10 Tf 56 435.84 Td (the position of each value is itself part of the evidence.) Tj ET
-BT /F1 8 Tf 56 420.34 Td ( 0  current_time                0x000000000000000000000000000000000000000000000000000000006aaa5964) Tj ET
-BT /F1 8 Tf 56 410.84 Td ( 1  expiry_time                 0x000000000000000000000000000000000000000000000000000000006aaa5ce8) Tj ET
-BT /F1 8 Tf 56 401.34 Td ( 2  vault_root                  0x00c442ca15132032d2e46fa93d346c3b169cc7e7c468e155568af6985851fe14) Tj ET
-BT /F1 8 Tf 56 391.84 Td ( 3  product_ref                 0x2b7e151628aed2a6abf7158809cf4f3c762e7160f38b4da56a784d9045190cfe) Tj ET
-BT /F1 8 Tf 56 382.34 Td ( 4  min_income                  0x000000000000000000000000000000000000000000000000000000000007a120) Tj ET
-BT /F1 8 Tf 56 372.84 Td ( 5  min_liquidity               0x00000000000000000000000000000000000000000000000000000000000f4240) Tj ET
-BT /F1 8 Tf 56 363.34 Td ( 6  max_concentration_percent   0x000000000000000000000000000000000000000000000000000000000000001e) Tj ET
-BT /F1 8 Tf 56 353.84 Td ( 7  product_risk_level          0x0000000000000000000000000000000000000000000000000000000000000003) Tj ET
-BT /F1 8 Tf 56 344.34 Td ( 8  user_public_key_x           0x042afbef1a8c0a4b32b159945f228958ee132cab4cd96ebc3d0e5deb556ebcea) Tj ET
-BT /F1 8 Tf 56 334.84 Td ( 9  user_public_key_y           0x2966405b88438082f03666d150dc3695b9f05b3a11ae200b768d902e06e972e8) Tj ET
-BT /F1 8 Tf 56 325.34 Td (10  nonce                       0x0f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08) Tj ET
-BT /F1 8 Tf 56 315.84 Td (11  suitable                    0x0000000000000000000000000000000000000000000000000000000000000000) Tj ET
-BT /F2 9 Tf 56 301.59 Td (#) Tj ET
-BT /F2 9 Tf 77.6 301.59 Td (Public input) Tj ET
-BT /F2 9 Tf 223.4 301.59 Td (Who fixes it) Tj ET
-0.55 G 0.6 w 56 294.84 m 539.28 294.84 l S
-BT /F1 9 Tf 56 283.09 Td (0) Tj ET
-BT /F1 9 Tf 77.6 283.09 Td (current_time) Tj ET
-BT /F1 9 Tf 223.4 283.09 Td (client, pinned by the server into the assessment window) Tj ET
-BT /F1 9 Tf 56 271.59 Td (1) Tj ET
-BT /F1 9 Tf 77.6 271.59 Td (expiry_time) Tj ET
-BT /F1 9 Tf 223.4 271.59 Td (server) Tj ET
-BT /F1 9 Tf 56 260.09 Td (2) Tj ET
-BT /F1 9 Tf 77.6 260.09 Td (vault_root) Tj ET
-BT /F1 9 Tf 223.4 260.09 Td (client, pinned by the server to the root this user synced) Tj ET
-BT /F1 9 Tf 56 248.59 Td (3) Tj ET
-BT /F1 9 Tf 77.6 248.59 Td (product_ref) Tj ET
-BT /F1 9 Tf 223.4 248.59 Td (server \(digest of the ISIN\)) Tj ET
-BT /F1 9 Tf 56 237.09 Td (4) Tj ET
-BT /F1 9 Tf 77.6 237.09 Td (min_income) Tj ET
-BT /F1 9 Tf 223.4 237.09 Td (server, from the product registry) Tj ET
-BT /F1 9 Tf 56 225.59 Td (5) Tj ET
-BT /F1 9 Tf 77.6 225.59 Td (min_liquidity) Tj ET
+BT /F1 9 Tf 72.2 579.34 Td (2026-08-19T20:32:28.853896Z) Tj ET
+BT /F1 9 Tf 228.8 579.34 Td (accepted) Tj ET
+BT /F1 9 Tf 288.2 579.34 Td (14656) Tj ET
+BT /F1 9 Tf 358.4 579.34 Td (e665cb99-1b0a-4c5c-951c-5bde68593) Tj ET
+BT /F1 9 Tf 358.4 567.84 Td (96a) Tj ET
+BT /F1 10 Tf 56 549.59 Td (Every attempt is listed, accepted and rejected alike. A pack that showed only) Tj ET
+BT /F1 10 Tf 56 536.59 Td (the accepted proof would hide the pattern a reviewer is looking for.) Tj ET
+BT /F1 8 Tf 56 521.09 Td (  attempt 1  accepted) Tj ET
+BT /F1 8 Tf 56 511.59 Td (    proof SHA-256  b5ae5f9f84aa60aa39b002a254c14d2545455b3440afdbb5809cdbdb1db8594c) Tj ET
+BT /F1 10 Tf 56 496.59 Td (No submitted proof was rejected by bb verify.) Tj ET
+BT /F2 12.5 Tf 56 467.72 Td (2c. The public inputs, in circuit order) Tj ET
+BT /F1 10 Tf 56 450.34 Td (From the accepted proof. Order is a protocol detail no client can guess and) Tj ET
+BT /F1 10 Tf 56 437.34 Td (getting it wrong produces a proof that fails verification with no clue why - so) Tj ET
+BT /F1 10 Tf 56 424.34 Td (the position of each value is itself part of the evidence.) Tj ET
+BT /F1 8 Tf 56 408.84 Td ( 0  current_time                0x000000000000000000000000000000000000000000000000000000006a8612da) Tj ET
+BT /F1 8 Tf 56 399.34 Td ( 1  expiry_time                 0x000000000000000000000000000000000000000000000000000000006a86165e) Tj ET
+BT /F1 8 Tf 56 389.84 Td ( 2  vault_root                  0x07f53b5c1554199d2a47d1212d483aeada94cfeba13c5d5050cc5b7a29a2514b) Tj ET
+BT /F1 8 Tf 56 380.34 Td ( 3  product_ref                 0x00378d5af8ed32697c80a9283e5d431bf8adcdea64e505f00af918097ca3af97) Tj ET
+BT /F1 8 Tf 56 370.84 Td ( 4  min_income                  0x000000000000000000000000000000000000000000000000000000000007a120) Tj ET
+BT /F1 8 Tf 56 361.34 Td ( 5  min_liquidity               0x00000000000000000000000000000000000000000000000000000000000f4240) Tj ET
+BT /F1 8 Tf 56 351.84 Td ( 6  max_concentration_percent   0x000000000000000000000000000000000000000000000000000000000000001e) Tj ET
+BT /F1 8 Tf 56 342.34 Td ( 7  product_risk_level          0x0000000000000000000000000000000000000000000000000000000000000003) Tj ET
+BT /F1 8 Tf 56 332.84 Td ( 8  user_public_key_x           0x1c2cf9935c50a6f222c2f56c0068e23702b67de0b71ce7fcc12535f973021cd0) Tj ET
+BT /F1 8 Tf 56 323.34 Td ( 9  user_public_key_y           0x2a7a7d7d22b236ade0ef963933615a4642d6fb5e54b175d8f09ad5327271a2ce) Tj ET
+BT /F1 8 Tf 56 313.84 Td (10  nonce                       0x00deb096d1a3a80abc5c87ff140d76c584b288e35c6522de5c4120b0360f52e4) Tj ET
+BT /F1 8 Tf 56 304.34 Td (11  suitable                    0x0000000000000000000000000000000000000000000000000000000000000000) Tj ET
+BT /F2 9 Tf 56 290.09 Td (#) Tj ET
+BT /F2 9 Tf 77.6 290.09 Td (Public input) Tj ET
+BT /F2 9 Tf 223.4 290.09 Td (Who fixes it) Tj ET
+0.55 G 0.6 w 56 283.34 m 539.28 283.34 l S
+BT /F1 9 Tf 56 271.59 Td (0) Tj ET
+BT /F1 9 Tf 77.6 271.59 Td (current_time) Tj ET
+BT /F1 9 Tf 223.4 271.59 Td (client, pinned by the server into the assessment window) Tj ET
+BT /F1 9 Tf 56 260.09 Td (1) Tj ET
+BT /F1 9 Tf 77.6 260.09 Td (expiry_time) Tj ET
+BT /F1 9 Tf 223.4 260.09 Td (server) Tj ET
+BT /F1 9 Tf 56 248.59 Td (2) Tj ET
+BT /F1 9 Tf 77.6 248.59 Td (vault_root) Tj ET
+BT /F1 9 Tf 223.4 248.59 Td (client, pinned by the server to the root this user synced) Tj ET
+BT /F1 9 Tf 56 237.09 Td (3) Tj ET
+BT /F1 9 Tf 77.6 237.09 Td (product_ref) Tj ET
+BT /F1 9 Tf 223.4 237.09 Td (server \(digest of the ISIN\)) Tj ET
+BT /F1 9 Tf 56 225.59 Td (4) Tj ET
+BT /F1 9 Tf 77.6 225.59 Td (min_income) Tj ET
 BT /F1 9 Tf 223.4 225.59 Td (server, from the product registry) Tj ET
-BT /F1 9 Tf 56 214.09 Td (6) Tj ET
-BT /F1 9 Tf 77.6 214.09 Td (max_concentration_percent) Tj ET
+BT /F1 9 Tf 56 214.09 Td (5) Tj ET
+BT /F1 9 Tf 77.6 214.09 Td (min_liquidity) Tj ET
 BT /F1 9 Tf 223.4 214.09 Td (server, from the product registry) Tj ET
-BT /F1 9 Tf 56 202.59 Td (7) Tj ET
-BT /F1 9 Tf 77.6 202.59 Td (product_risk_level) Tj ET
+BT /F1 9 Tf 56 202.59 Td (6) Tj ET
+BT /F1 9 Tf 77.6 202.59 Td (max_concentration_percent) Tj ET
 BT /F1 9 Tf 223.4 202.59 Td (server, from the product registry) Tj ET
-BT /F1 9 Tf 56 191.09 Td (8) Tj ET
-BT /F1 9 Tf 77.6 191.09 Td (user_public_key_x) Tj ET
-BT /F1 9 Tf 223.4 191.09 Td (client \(Baby Jubjub\)) Tj ET
-BT /F1 9 Tf 56 179.59 Td (9) Tj ET
-BT /F1 9 Tf 77.6 179.59 Td (user_public_key_y) Tj ET
+BT /F1 9 Tf 56 191.09 Td (7) Tj ET
+BT /F1 9 Tf 77.6 191.09 Td (product_risk_level) Tj ET
+BT /F1 9 Tf 223.4 191.09 Td (server, from the product registry) Tj ET
+BT /F1 9 Tf 56 179.59 Td (8) Tj ET
+BT /F1 9 Tf 77.6 179.59 Td (user_public_key_x) Tj ET
 BT /F1 9 Tf 223.4 179.59 Td (client \(Baby Jubjub\)) Tj ET
-BT /F1 9 Tf 56 168.09 Td (10) Tj ET
-BT /F1 9 Tf 77.6 168.09 Td (nonce) Tj ET
-BT /F1 9 Tf 223.4 168.09 Td (server, single use) Tj ET
-BT /F1 9 Tf 56 156.59 Td (11) Tj ET
-BT /F1 9 Tf 77.6 156.59 Td (suitable) Tj ET
-BT /F1 9 Tf 223.4 156.59 Td (THE CIRCUIT - this is the answer, not an input) Tj ET
-BT /F2 12.5 Tf 56 126.47 Td (2d. What bb verify does and does not mean) Tj ET
-BT /F1 10 Tf 56 109.09 Td (bb verify answers one question: was this proof correctly constructed against) Tj ET
-BT /F1 10 Tf 56 96.09 Td (this verification key. It does not answer whether the client passed.) Tj ET
-BT /F1 10 Tf 56 79.09 Td (A proof that the client FAILED the assessment verifies exactly as cleanly as one) Tj ET
-BT /F1 10 Tf 56 66.09 Td (that they passed - same key, same exit code, same success message. A relying) Tj ET
+BT /F1 9 Tf 56 168.09 Td (9) Tj ET
+BT /F1 9 Tf 77.6 168.09 Td (user_public_key_y) Tj ET
+BT /F1 9 Tf 223.4 168.09 Td (client \(Baby Jubjub\)) Tj ET
+BT /F1 9 Tf 56 156.59 Td (10) Tj ET
+BT /F1 9 Tf 77.6 156.59 Td (nonce) Tj ET
+BT /F1 9 Tf 223.4 156.59 Td (server, single use) Tj ET
+BT /F1 9 Tf 56 145.09 Td (11) Tj ET
+BT /F1 9 Tf 77.6 145.09 Td (suitable) Tj ET
+BT /F1 9 Tf 223.4 145.09 Td (THE CIRCUIT - this is the answer, not an input) Tj ET
+BT /F2 12.5 Tf 56 114.97 Td (2d. What bb verify does and does not mean) Tj ET
+BT /F1 10 Tf 56 97.59 Td (bb verify answers one question: was this proof correctly constructed against) Tj ET
+BT /F1 10 Tf 56 84.59 Td (this verification key. It does not answer whether the client passed.) Tj ET
+BT /F1 10 Tf 56 67.59 Td (A proof that the client FAILED the assessment verifies exactly as cleanly as one) Tj ET
 0.55 G 0.6 w 56 42 m 539.28 42 l S
-BT /F1 8 Tf 268.84 30 Td (Page 3 of 10) Tj ET
+BT /F1 8 Tf 268.84 30 Td (Page 3 of 13) Tj ET
 endstream
 endobj
 13 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 14 0 R >>
 endobj
 14 0 obj
-<< /Length 5308 >>
+<< /Length 5122 >>
 stream
-BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 71386234-daae-4896-91fe-4c469cf59af2 - not an AdES signature) Tj ET
+BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 03698737-9f9c-425c-b893-3a5c0bfadcce - not an AdES signature) Tj ET
 0.55 G 0.6 w 56 795.89 m 539.28 795.89 l S
-BT /F1 10 Tf 56 778.39 Td (party that reads the exit code and stops there approves everyone who was) Tj ET
-BT /F1 10 Tf 56 765.39 Td (assessed, including everyone who failed, while holding cryptographic evidence) Tj ET
-BT /F1 10 Tf 56 752.39 Td (that appears to support it. This is demonstrated with a real Barretenberg proof) Tj ET
-BT /F1 10 Tf 56 739.39 Td (in tests/test_wealth_suitability_e2e.py, not merely asserted.) Tj ET
-BT /F1 10 Tf 56 722.39 Td (The verdict is not the exit code. It is a public output of the circuit, read) Tj ET
-BT /F1 10 Tf 56 709.39 Td (explicitly from its position in the public input vector:) Tj ET
-BT /F1 8 Tf 56 693.89 Td (  VERDICT       NOT SUITABLE) Tj ET
-BT /F1 8 Tf 56 684.39 Td (  read from     public input 11 of 12) Tj ET
-BT /F1 8 Tf 56 674.89 Td (  assessed at   2026-09-16T09:00:41Z) Tj ET
-BT /F1 8 Tf 56 665.39 Td (  assessed      true) Tj ET
-BT /F2 10 Tf 56 650.39 Td (Issuer's own note) Tj ET
-BT /F1 10 Tf 170 650.39 Td (`bb verify` succeeding means the proof is well formed, not) Tj ET
-BT /F1 10 Tf 170 637.39 Td (that the client passed. The verdict is the circuit's public) Tj ET
-BT /F1 10 Tf 170 624.39 Td (output and is read explicitly.) Tj ET
-BT /F2 12.5 Tf 56 595.51 Td (2e. The attestation token) Tj ET
-BT /F1 10 Tf 56 578.14 Td (Supplied by the caller. Anyone can re-verify this token against the issuer's) Tj ET
-BT /F1 10 Tf 56 565.14 Td (published JWKS - GET <issuer>/.well-known/jwks.json, then one EdDSA check in any) Tj ET
-BT /F1 10 Tf 56 552.14 Td (JOSE library - with no call to Memtara, no cooperation from the firm, and no) Tj ET
-BT /F1 10 Tf 56 539.14 Td (reliance on this document. That makes it the strongest authenticity claim in the) Tj ET
-BT /F1 10 Tf 56 526.14 Td (pack, stronger than the seal in section 5.) Tj ET
-BT /F1 10 Tf 56 509.14 Td (This exporter decoded the token but did NOT verify its signature. Verification) Tj ET
-BT /F1 10 Tf 56 496.14 Td (needs the issuer's key set, and a pack whose 'verified' stamp depended on what) Tj ET
-BT /F1 10 Tf 56 483.14 Td (DNS answered at export time would be asserting something it cannot evidence. The) Tj ET
-BT /F1 10 Tf 56 470.14 Td (check above is the reader's to run.) Tj ET
-BT /F2 10 Tf 56 453.14 Td (Algorithm) Tj ET
-BT /F1 10 Tf 140 453.14 Td (EdDSA) Tj ET
-BT /F2 10 Tf 56 440.14 Td (Key id \(kid\)) Tj ET
-BT /F1 10 Tf 140 440.14 Td (1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y) Tj ET
-BT /F2 10 Tf 56 427.14 Td (Signature) Tj ET
-BT /F1 10 Tf 140 427.14 Td (64 bytes) Tj ET
-BT /F1 10 Tf 56 410.14 Td (Decoded claims:) Tj ET
-BT /F1 8 Tf 56 394.64 Td ({) Tj ET
-BT /F1 8 Tf 56 385.14 Td (  "cbuae_clauses": [) Tj ET
-BT /F1 8 Tf 56 375.64 Td (    "5\(c\)",) Tj ET
-BT /F1 8 Tf 56 366.14 Td (    "5\(d\)",) Tj ET
-BT /F1 8 Tf 56 356.64 Td (    "4\(a\)") Tj ET
-BT /F1 8 Tf 56 347.14 Td (  ],) Tj ET
-BT /F1 8 Tf 56 337.64 Td (  "circuit": "wealth_suitability",) Tj ET
-BT /F1 8 Tf 56 328.14 Td (  "dfsa_rules": [) Tj ET
-BT /F1 8 Tf 56 318.64 Td (    "COB 3.1") Tj ET
-BT /F1 8 Tf 56 309.14 Td (  ],) Tj ET
-BT /F1 8 Tf 56 299.64 Td (  "exp": 1789456200,) Tj ET
-BT /F1 8 Tf 56 290.14 Td (  "iat": 1789455900,) Tj ET
-BT /F1 8 Tf 56 280.64 Td (  "iss": "https://issuer.memtara.example",) Tj ET
-BT /F1 8 Tf 56 271.14 Td (  "predicate": "structured_product_suitable",) Tj ET
-BT /F1 8 Tf 56 261.64 Td (  "proof_hash": "5a918a2496fc74d3089e97dc8d49e27e5454cd5e92cbfbbf78cc6388e172ab81",) Tj ET
-BT /F1 8 Tf 56 252.14 Td (  "sub": "97042d32-ab91-461b-9bae-9e0c62c99448",) Tj ET
-BT /F1 8 Tf 56 242.64 Td (  "suitable": false,) Tj ET
-BT /F1 8 Tf 56 233.14 Td (  "verified": true) Tj ET
-BT /F1 8 Tf 56 223.64 Td (}) Tj ET
-BT /F1 10 Tf 56 208.64 Td (Two claims are easy to conflate and must not be. 'verified' is about the proof -) Tj ET
-BT /F1 10 Tf 56 195.64 Td (it is always true on an issued token, because a failed verification produces an) Tj ET
-BT /F1 10 Tf 56 182.64 Td (error rather than a token. 'suitable' is the answer that proof carried, and it) Tj ET
-BT /F1 10 Tf 56 169.64 Td (is legitimately false sometimes. A relying party that gates on 'verified' has) Tj ET
-BT /F1 10 Tf 56 156.64 Td (gated on nothing.) Tj ET
-BT /F1 10 Tf 56 139.64 Td (The token as issued:) Tj ET
-BT /F1 8 Tf 56 124.14 Td (  eyJhbGciOiAiRWREU0EiLCAidHlwIjogIkpXVCIsICJraWQiOiAiMUlHMnRNSDdKMndiSlpuT2Y4TEp6UWl0S2Y3TE) Tj ET
-BT /F1 8 Tf 56 114.64 Td (  12b0FFbHN1RE1WTTU0WSJ9.eyJpc3MiOiAiaHR0cHM6Ly9pc3N1ZXIubWVtdGFyYS5leGFtcGxlIiwgInN1YiI6ICI) Tj ET
-BT /F1 8 Tf 56 105.14 Td (  5NzA0MmQzMi1hYjkxLTQ2MWItOWJhZS05ZTBjNjJjOTk0NDgiLCAiaWF0IjogMTc4OTQ1NTkwMCwgImV4cCI6IDE3O) Tj ET
-BT /F1 8 Tf 56 95.64 Td (  Dk0NTYyMDAsICJjaXJjdWl0IjogIndlYWx0aF9zdWl0YWJpbGl0eSIsICJwcmVkaWNhdGUiOiAic3RydWN0dXJlZF9) Tj ET
-BT /F1 8 Tf 56 86.14 Td (  wcm9kdWN0X3N1aXRhYmxlIiwgInZlcmlmaWVkIjogdHJ1ZSwgInN1aXRhYmxlIjogZmFsc2UsICJwcm9vZl9oYXNoI) Tj ET
-BT /F1 8 Tf 56 76.64 Td (  jogIjVhOTE4YTI0OTZmYzc0ZDMwODllOTdkYzhkNDllMjdlNTQ1NGNkNWU5MmNiZmJiZjc4Y2M2Mzg4ZTE3MmFiODE) Tj ET
-BT /F1 8 Tf 56 67.14 Td (  iLCAiZGZzYV9ydWxlcyI6IFsiQ09CIDMuMSJdLCAiY2J1YWVfY2xhdXNlcyI6IFsiNShjKSIsICI1KGQpIiwgIjQoY) Tj ET
+BT /F1 10 Tf 56 778.39 Td (that they passed - same key, same exit code, same success message. A relying) Tj ET
+BT /F1 10 Tf 56 765.39 Td (party that reads the exit code and stops there approves everyone who was) Tj ET
+BT /F1 10 Tf 56 752.39 Td (assessed, including everyone who failed, while holding cryptographic evidence) Tj ET
+BT /F1 10 Tf 56 739.39 Td (that appears to support it. This is demonstrated with a real Barretenberg proof) Tj ET
+BT /F1 10 Tf 56 726.39 Td (in tests/test_wealth_suitability_e2e.py, not merely asserted.) Tj ET
+BT /F1 10 Tf 56 709.39 Td (The verdict is not the exit code. It is a public output of the circuit, read) Tj ET
+BT /F1 10 Tf 56 696.39 Td (explicitly from its position in the public input vector:) Tj ET
+BT /F1 8 Tf 56 680.89 Td (  VERDICT       NOT SUITABLE) Tj ET
+BT /F1 8 Tf 56 671.39 Td (  read from     public input 11 of 12) Tj ET
+BT /F1 8 Tf 56 661.89 Td (  assessed at   2026-08-19T20:32:28.860054Z) Tj ET
+BT /F1 8 Tf 56 652.39 Td (  assessed      true) Tj ET
+BT /F2 10 Tf 56 637.39 Td (Issuer's own note) Tj ET
+BT /F1 10 Tf 170 637.39 Td (`bb verify` succeeding means the proof is well formed, not) Tj ET
+BT /F1 10 Tf 170 624.39 Td (that the client passed. The verdict is the circuit's public) Tj ET
+BT /F1 10 Tf 170 611.39 Td (output and is read explicitly.) Tj ET
+BT /F2 12.5 Tf 56 582.51 Td (2e. The attestation token) Tj ET
+BT /F1 10 Tf 56 565.14 Td (Supplied by the caller. Anyone can re-verify this token against the issuer's) Tj ET
+BT /F1 10 Tf 56 552.14 Td (published JWKS - GET <issuer>/.well-known/jwks.json, then one EdDSA check in any) Tj ET
+BT /F1 10 Tf 56 539.14 Td (JOSE library - with no call to Memtara, no cooperation from the firm, and no) Tj ET
+BT /F1 10 Tf 56 526.14 Td (reliance on this document. That makes it the strongest authenticity claim in the) Tj ET
+BT /F1 10 Tf 56 513.14 Td (pack, stronger than the seal in section 5.) Tj ET
+BT /F1 10 Tf 56 496.14 Td (This exporter decoded the token but did NOT verify its signature. Verification) Tj ET
+BT /F1 10 Tf 56 483.14 Td (needs the issuer's key set, and a pack whose 'verified' stamp depended on what) Tj ET
+BT /F1 10 Tf 56 470.14 Td (DNS answered at export time would be asserting something it cannot evidence. The) Tj ET
+BT /F1 10 Tf 56 457.14 Td (check above is the reader's to run.) Tj ET
+BT /F2 10 Tf 56 440.14 Td (Algorithm) Tj ET
+BT /F1 10 Tf 140 440.14 Td (EdDSA) Tj ET
+BT /F2 10 Tf 56 427.14 Td (Key id \(kid\)) Tj ET
+BT /F1 10 Tf 140 427.14 Td (1IG2tMH7J2wbJZnOf8LJzQitKf7LMvoAElsuDMVM54Y) Tj ET
+BT /F2 10 Tf 56 414.14 Td (Signature) Tj ET
+BT /F1 10 Tf 140 414.14 Td (64 bytes) Tj ET
+BT /F1 10 Tf 56 397.14 Td (Decoded claims:) Tj ET
+BT /F1 8 Tf 56 381.64 Td ({) Tj ET
+BT /F1 8 Tf 56 372.14 Td (  "cbuae_clauses": [) Tj ET
+BT /F1 8 Tf 56 362.64 Td (    "5\(c\)",) Tj ET
+BT /F1 8 Tf 56 353.14 Td (    "5\(d\)",) Tj ET
+BT /F1 8 Tf 56 343.64 Td (    "4\(a\)") Tj ET
+BT /F1 8 Tf 56 334.14 Td (  ],) Tj ET
+BT /F1 8 Tf 56 324.64 Td (  "circuit": "wealth_suitability",) Tj ET
+BT /F1 8 Tf 56 315.14 Td (  "dfsa_rules": [) Tj ET
+BT /F1 8 Tf 56 305.64 Td (    "COB 3.1") Tj ET
+BT /F1 8 Tf 56 296.14 Td (  ],) Tj ET
+BT /F1 8 Tf 56 286.64 Td (  "exp": 1787171848,) Tj ET
+BT /F1 8 Tf 56 277.14 Td (  "iat": 1787171548,) Tj ET
+BT /F1 8 Tf 56 267.64 Td (  "iss": "http://127.0.0.1:65154",) Tj ET
+BT /F1 8 Tf 56 258.14 Td (  "jti": "73c66624-c2b3-4268-9ac7-59b25351ab47",) Tj ET
+BT /F1 8 Tf 56 248.64 Td (  "predicate": "structured_product_suitable",) Tj ET
+BT /F1 8 Tf 56 239.14 Td (  "product_isin": "XS2500000018",) Tj ET
+BT /F1 8 Tf 56 229.64 Td (  "proof_hash": "b5ae5f9f84aa60aa39b002a254c14d2545455b3440afdbb5809cdbdb1db8594c",) Tj ET
+BT /F1 8 Tf 56 220.14 Td (  "regulatory_audit_id": "0484c505-c1f9-4917-8268-41d5dadef720",) Tj ET
+BT /F1 8 Tf 56 210.64 Td (  "sub": "8fbb731c-78df-4081-8759-98bb9bc2d901",) Tj ET
+BT /F1 8 Tf 56 201.14 Td (  "suitable": false,) Tj ET
+BT /F1 8 Tf 56 191.64 Td (  "user_id": "8fbb731c-78df-4081-8759-98bb9bc2d901",) Tj ET
+BT /F1 8 Tf 56 182.14 Td (  "verified": true) Tj ET
+BT /F1 8 Tf 56 172.64 Td (}) Tj ET
+BT /F1 10 Tf 56 157.64 Td (Two claims are easy to conflate and must not be. 'verified' is about the proof -) Tj ET
+BT /F1 10 Tf 56 144.64 Td (it is always true on an issued token, because a failed verification produces an) Tj ET
+BT /F1 10 Tf 56 131.64 Td (error rather than a token. 'suitable' is the answer that proof carried, and it) Tj ET
+BT /F1 10 Tf 56 118.64 Td (is legitimately false sometimes. A relying party that gates on 'verified' has) Tj ET
+BT /F1 10 Tf 56 105.64 Td (gated on nothing.) Tj ET
+BT /F1 10 Tf 56 88.64 Td (The token as issued:) Tj ET
+BT /F1 8 Tf 56 73.14 Td (  eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCIsImtpZCI6IjFJRzJ0TUg3SjJ3Ykpabk9mOExKelFpdEtmN0xNdm9BRW) Tj ET
+BT /F1 8 Tf 56 63.64 Td (  xzdURNVk01NFkifQ.eyJpc3MiOiJodHRwOi8vMTI3LjAuMC4xOjY1MTU0Iiwic3ViIjoiOGZiYjczMWMtNzhkZi00M) Tj ET
 0.55 G 0.6 w 56 42 m 539.28 42 l S
-BT /F1 8 Tf 268.84 30 Td (Page 4 of 10) Tj ET
+BT /F1 8 Tf 268.84 30 Td (Page 4 of 13) Tj ET
 endstream
 endobj
 15 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 16 0 R >>
 endobj
 16 0 obj
-<< /Length 725 >>
+<< /Length 1626 >>
 stream
-BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 71386234-daae-4896-91fe-4c469cf59af2 - not an AdES signature) Tj ET
+BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 03698737-9f9c-425c-b893-3a5c0bfadcce - not an AdES signature) Tj ET
 0.55 G 0.6 w 56 795.89 m 539.28 795.89 l S
-BT /F1 8 Tf 56 779.89 Td (  SkiXX0.Vaen5e2yR-BReTKwoQAXo0sXAxgp9wOSSPalmhbUVXXyhHWNpAkiAVut_-Rc010anUTTcAm-nMxXkeO-MBP) Tj ET
-BT /F1 8 Tf 56 770.39 Td (  wDw) Tj ET
-BT /F1 10 Tf 56 755.39 Td (The token had a lifetime of a few minutes and expired long before this pack was) Tj ET
-BT /F1 10 Tf 56 742.39 Td (printed, so reproducing it here discloses no usable credential. It is reproduced) Tj ET
-BT /F1 10 Tf 56 729.39 Td (because it is the artefact an examiner re-checks.) Tj ET
+BT /F1 8 Tf 56 779.89 Td (  DgxLTg3NTktOThiYjliYzJkOTAxIiwidXNlcl9pZCI6IjhmYmI3MzFjLTc4ZGYtNDA4MS04NzU5LTk4YmI5YmMyZDk) Tj ET
+BT /F1 8 Tf 56 770.39 Td (  wMSIsInByZWRpY2F0ZSI6InN0cnVjdHVyZWRfcHJvZHVjdF9zdWl0YWJsZSIsInZlcmlmaWVkIjp0cnVlLCJjaXJjd) Tj ET
+BT /F1 8 Tf 56 760.89 Td (  Wl0Ijoid2VhbHRoX3N1aXRhYmlsaXR5IiwicHJvb2ZfaGFzaCI6ImI1YWU1ZjlmODRhYTYwYWEzOWIwMDJhMjU0YzE) Tj ET
+BT /F1 8 Tf 56 751.39 Td (  0ZDI1NDU0NTViMzQ0MGFmZGJiNTgwOWNkYmRiMWRiODU5NGMiLCJyZWd1bGF0b3J5X2F1ZGl0X2lkIjoiMDQ4NGM1M) Tj ET
+BT /F1 8 Tf 56 741.89 Td (  DUtYzFmOS00OTE3LTgyNjgtNDFkNWRhZGVmNzIwIiwiY2J1YWVfY2xhdXNlcyI6WyI1KGMpIiwiNShkKSIsIjQoYSk) Tj ET
+BT /F1 8 Tf 56 732.39 Td (  iXSwicHJvZHVjdF9pc2luIjoiWFMyNTAwMDAwMDE4Iiwic3VpdGFibGUiOmZhbHNlLCJkZnNhX3J1bGVzIjpbIkNPQ) Tj ET
+BT /F1 8 Tf 56 722.89 Td (  iAzLjEiXSwiaWF0IjoxNzg3MTcxNTQ4LCJleHAiOjE3ODcxNzE4NDgsImp0aSI6IjczYzY2NjI0LWMyYjMtNDI2OC0) Tj ET
+BT /F1 8 Tf 56 713.39 Td (  5YWM3LTU5YjI1MzUxYWI0NyJ9.OOYWQx5qpzz4VMTZM3tSe5w4SwLu7DA27V0TcIYjrLvLZAzfEGn-ZD7Z5puVAuGd) Tj ET
+BT /F1 8 Tf 56 703.89 Td (  SyvRgMKis2w3SiIaiXpDDg) Tj ET
+BT /F1 10 Tf 56 688.89 Td (The token had a lifetime of a few minutes and expired long before this pack was) Tj ET
+BT /F1 10 Tf 56 675.89 Td (printed, so reproducing it here discloses no usable credential. It is reproduced) Tj ET
+BT /F1 10 Tf 56 662.89 Td (because it is the artefact an examiner re-checks.) Tj ET
 0.55 G 0.6 w 56 42 m 539.28 42 l S
-BT /F1 8 Tf 268.84 30 Td (Page 5 of 10) Tj ET
+BT /F1 8 Tf 268.84 30 Td (Page 5 of 13) Tj ET
 endstream
 endobj
 17 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 18 0 R >>
 endobj
 18 0 obj
-<< /Length 5304 >>
+<< /Length 6544 >>
 stream
-BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 71386234-daae-4896-91fe-4c469cf59af2 - not an AdES signature) Tj ET
+BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 03698737-9f9c-425c-b893-3a5c0bfadcce - not an AdES signature) Tj ET
 0.55 G 0.6 w 56 795.89 m 539.28 795.89 l S
 BT /F2 16 Tf 56 759.89 Td (3. Audit chains) Tj ET
 BT /F1 10 Tf 56 740.59 Td (Two independent, append-only hash chains cover this assessment: Memtara's own) Tj ET
@@ -370,72 +379,340 @@ BT /F1 10 Tf 56 675.59 Td (without breaking a chain.) Tj ET
 BT /F2 12.5 Tf 56 646.72 Td (3a. Memtara audit_log excerpt) Tj ET
 BT /F2 9 Tf 56 630.09 Td (seq) Tj ET
 BT /F2 9 Tf 88.4 630.09 Td (Event) Tj ET
-BT /F2 9 Tf 234.2 630.09 Td (Created at) Tj ET
+BT /F2 9 Tf 223.4 630.09 Td (Created at) Tj ET
 BT /F2 9 Tf 353 630.09 Td (prev_hash) Tj ET
 BT /F2 9 Tf 450.2 630.09 Td (event_hash) Tj ET
 0.55 G 0.6 w 56 623.34 m 539.28 623.34 l S
-BT /F1 9 Tf 56 611.59 Td (4118) Tj ET
-BT /F1 9 Tf 88.4 611.59 Td (wealth_suitability_reques) Tj ET
-BT /F1 9 Tf 88.4 600.09 Td (ted) Tj ET
-BT /F1 9 Tf 234.2 611.59 Td (2026-09-16T08:55:00Z) Tj ET
-BT /F1 9 Tf 353 611.59 Td (aa11bb22cc33dd44) Tj ET
-BT /F1 9 Tf 450.2 611.59 Td (c2b7d1a0f3e49568) Tj ET
-BT /F1 9 Tf 56 588.59 Td (4131) Tj ET
-BT /F1 9 Tf 88.4 588.59 Td (wealth_suitability_assess) Tj ET
-BT /F1 9 Tf 88.4 577.09 Td (ed) Tj ET
-BT /F1 9 Tf 234.2 588.59 Td (2026-09-16T09:00:41Z) Tj ET
-BT /F1 9 Tf 353 588.59 Td (c2b7d1a0f3e49568) Tj ET
-BT /F1 9 Tf 450.2 588.59 Td (d3c8e2b1a4f50679) Tj ET
-BT /F1 10 Tf 56 558.84 Td (Hashes are shown truncated to 16 characters for the table; the full values) Tj ET
-BT /F1 10 Tf 56 545.84 Td (follow. seq is the position in the firm's global chain, so consecutive entries) Tj ET
-BT /F1 10 Tf 56 532.84 Td (for this assessment are not expected to be adjacent - other assessments were) Tj ET
-BT /F1 10 Tf 56 519.84 Td (interleaved.) Tj ET
-BT /F1 8 Tf 56 504.34 Td (  seq 4118  wealth_suitability_requested) Tj ET
-BT /F1 8 Tf 56 494.84 Td (    event_hash  c2b7d1a0f3e4956871209a3b4c5d6e7f8091a2b3c4d5e6f70819a2b3c4d5e6f7) Tj ET
-BT /F1 8 Tf 56 485.34 Td (    prev_hash   aa11bb22cc33dd44ee55ff6677889900112233445566778899aabbccddeeff00) Tj ET
-BT /F1 8 Tf 56 475.84 Td (  seq 4131  wealth_suitability_assessed) Tj ET
-BT /F1 8 Tf 56 466.34 Td (    event_hash  d3c8e2b1a4f5067982310b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f80) Tj ET
-BT /F1 8 Tf 56 456.84 Td (    prev_hash   c2b7d1a0f3e4956871209a3b4c5d6e7f8091a2b3c4d5e6f70819a2b3c4d5e6f7) Tj ET
-BT /F2 12.5 Tf 56 429.97 Td (3b. AIHOOTS SHA-256 audit chain) Tj ET
-BT /F2 10 Tf 56 412.59 Td (Log) Tj ET
-BT /F1 10 Tf 224 412.59 Td (cro_demo/aihoots_audit.jsonl) Tj ET
-BT /F2 10 Tf 56 399.59 Td (Records read) Tj ET
-BT /F1 10 Tf 224 399.59 Td (1) Tj ET
-BT /F2 10 Tf 56 386.59 Td (Entries matching this) Tj ET
-BT /F2 10 Tf 56 373.59 Td (assessment) Tj ET
-BT /F1 10 Tf 224 386.59 Td (0) Tj ET
-BT /F1 10 Tf 56 356.59 Td (No entry in the supplied log carries a proof digest from this assessment. Either) Tj ET
-BT /F1 10 Tf 56 343.59 Td (this is the wrong log, or the relying party never processed this assessment) Tj ET
-BT /F1 10 Tf 56 330.59 Td (through its gateway. The linkage is by proof_hash: the digests in section 2b are) Tj ET
-BT /F1 10 Tf 56 317.59 Td (what an entry must carry to appear here.) Tj ET
-BT /F1 10 Tf 56 300.59 Td (Proof digests from section 2b with no matching entry in this log \(expected for) Tj ET
-BT /F1 10 Tf 56 287.59 Td (rejected attempts, which never reach a relying party\):) Tj ET
-BT /F1 8 Tf 56 272.09 Td (  5a918a2496fc74d3089e97dc8d49e27e5454cd5e92cbfbbf78cc6388e172ab81) Tj ET
-BT /F2 10.5 Tf 56 246.72 Td (3c. audit-verify verdict) Tj ET
-BT /F1 10 Tf 56 230.44 Td (Run as a subprocess against AIHOOTS's own pinned code, reproduced verbatim -) Tj ET
-BT /F1 10 Tf 56 217.44 Td (exit code and both streams. Nothing here is this tool's paraphrase. A line wider) Tj ET
-BT /F1 10 Tf 56 204.44 Td (than the page is clipped rather than re-flowed, with a '>' marking the cut; the) Tj ET
-BT /F1 10 Tf 56 191.44 Td (untruncated text is part of the canonical evidence hashed in section 5.) Tj ET
-BT /F1 8 Tf 56 175.94 Td (  $ python -m src.verifier.cli cro_demo/aihoots_audit.jsonl) Tj ET
-BT /F1 8 Tf 56 166.44 Td (  exit code: 0) Tj ET
-BT /F1 8 Tf 56 156.94 Td (  --- stdout ---) Tj ET
-BT /F1 8 Tf 56 147.44 Td (  OK: audit chain intact \(/Users/prashantsingh/Desktop/memtara-zkp/cro_demo/aihoots_audit.jsonl\)) Tj ET
-BT /F1 10 Tf 56 132.44 Td (Exit code 0 means every record's stored hash matches its recomputed contents and) Tj ET
-BT /F1 10 Tf 56 119.44 Td (every prev_hash matches its predecessor. It means the log is internally) Tj ET
-BT /F1 10 Tf 56 106.44 Td (consistent; it does not mean the log is complete. A hash chain proves nothing) Tj ET
-BT /F1 10 Tf 56 93.44 Td (was altered, not that nothing was deleted from the end or never written -) Tj ET
-BT /F1 10 Tf 56 80.44 Td (retention and off-box replication remain the firm's obligation.) Tj ET
+BT /F1 9 Tf 56 611.59 Td (4749) Tj ET
+BT /F1 9 Tf 88.4 611.59 Td (wealth_suitability_requ) Tj ET
+BT /F1 9 Tf 88.4 600.09 Td (ested) Tj ET
+BT /F1 9 Tf 223.4 611.59 Td (2026-08-19T20:32:27.16) Tj ET
+BT /F1 9 Tf 223.4 600.09 Td (1863Z) Tj ET
+BT /F1 9 Tf 353 611.59 Td (76a65065858ef993) Tj ET
+BT /F1 9 Tf 450.2 611.59 Td (41bf40d14df809f2) Tj ET
+BT /F1 9 Tf 56 588.59 Td (4750) Tj ET
+BT /F1 9 Tf 88.4 588.59 Td (decision_model_attestat) Tj ET
+BT /F1 9 Tf 88.4 577.09 Td (ion_bound) Tj ET
+BT /F1 9 Tf 223.4 588.59 Td (2026-08-19T20:32:27.16) Tj ET
+BT /F1 9 Tf 223.4 577.09 Td (1863Z) Tj ET
+BT /F1 9 Tf 353 588.59 Td (41bf40d14df809f2) Tj ET
+BT /F1 9 Tf 450.2 588.59 Td (fe4f6a22bfed1335) Tj ET
+BT /F1 9 Tf 56 565.59 Td (4751) Tj ET
+BT /F1 9 Tf 88.4 565.59 Td (disclosure_policy_bound) Tj ET
+BT /F1 9 Tf 223.4 565.59 Td (2026-08-19T20:32:27.16) Tj ET
+BT /F1 9 Tf 223.4 554.09 Td (1863Z) Tj ET
+BT /F1 9 Tf 353 565.59 Td (fe4f6a22bfed1335) Tj ET
+BT /F1 9 Tf 450.2 565.59 Td (ea08398ebe27863e) Tj ET
+BT /F1 9 Tf 56 542.59 Td (4752) Tj ET
+BT /F1 9 Tf 88.4 542.59 Td (proof_verified) Tj ET
+BT /F1 9 Tf 223.4 542.59 Td (2026-08-19T20:32:28.85) Tj ET
+BT /F1 9 Tf 223.4 531.09 Td (3896Z) Tj ET
+BT /F1 9 Tf 353 542.59 Td (ea08398ebe27863e) Tj ET
+BT /F1 9 Tf 450.2 542.59 Td (c679baf2801c5412) Tj ET
+BT /F1 9 Tf 56 519.59 Td (4753) Tj ET
+BT /F1 9 Tf 88.4 519.59 Td (wealth_suitability_asse) Tj ET
+BT /F1 9 Tf 88.4 508.09 Td (ssed) Tj ET
+BT /F1 9 Tf 223.4 519.59 Td (2026-08-19T20:32:28.86) Tj ET
+BT /F1 9 Tf 223.4 508.09 Td (0873Z) Tj ET
+BT /F1 9 Tf 353 519.59 Td (c679baf2801c5412) Tj ET
+BT /F1 9 Tf 450.2 519.59 Td (12446c1f29dc486a) Tj ET
+BT /F1 9 Tf 56 496.59 Td (4754) Tj ET
+BT /F1 9 Tf 88.4 496.59 Td (decision_human_reviewed) Tj ET
+BT /F1 9 Tf 223.4 496.59 Td (2026-08-19T20:32:28.88) Tj ET
+BT /F1 9 Tf 223.4 485.09 Td (1081Z) Tj ET
+BT /F1 9 Tf 353 496.59 Td (12446c1f29dc486a) Tj ET
+BT /F1 9 Tf 450.2 496.59 Td (bdcb17f7b7ffc388) Tj ET
+BT /F1 10 Tf 56 466.84 Td (Hashes are shown truncated to 16 characters for the table; the full values) Tj ET
+BT /F1 10 Tf 56 453.84 Td (follow. seq is the position in the firm's global chain, so consecutive entries) Tj ET
+BT /F1 10 Tf 56 440.84 Td (for this assessment are not expected to be adjacent - other assessments were) Tj ET
+BT /F1 10 Tf 56 427.84 Td (interleaved.) Tj ET
+BT /F1 8 Tf 56 412.34 Td (  seq 4749  wealth_suitability_requested) Tj ET
+BT /F1 8 Tf 56 402.84 Td (    event_hash  41bf40d14df809f2364244c33759de1fbaf71e96bff93e2d8670c59d2fc8dfd6) Tj ET
+BT /F1 8 Tf 56 393.34 Td (    prev_hash   76a65065858ef993b254b6e58e48124f08f7da2aa967e4f677a277ccb33d4ceb) Tj ET
+BT /F1 8 Tf 56 383.84 Td (  seq 4750  decision_model_attestation_bound) Tj ET
+BT /F1 8 Tf 56 374.34 Td (    event_hash  fe4f6a22bfed13359ea12a0c5eb3a2951d4632bf064b26c4e4e0181985dedc21) Tj ET
+BT /F1 8 Tf 56 364.84 Td (    prev_hash   41bf40d14df809f2364244c33759de1fbaf71e96bff93e2d8670c59d2fc8dfd6) Tj ET
+BT /F1 8 Tf 56 355.34 Td (  seq 4751  disclosure_policy_bound) Tj ET
+BT /F1 8 Tf 56 345.84 Td (    event_hash  ea08398ebe27863eaf5125fe8bb97f6429797dd4b656b9c462ee57ff0502406e) Tj ET
+BT /F1 8 Tf 56 336.34 Td (    prev_hash   fe4f6a22bfed13359ea12a0c5eb3a2951d4632bf064b26c4e4e0181985dedc21) Tj ET
+BT /F1 8 Tf 56 326.84 Td (  seq 4752  proof_verified) Tj ET
+BT /F1 8 Tf 56 317.34 Td (    event_hash  c679baf2801c5412278cf07978759ebd2209b75f21961d6fcf0afc67fddb5e6f) Tj ET
+BT /F1 8 Tf 56 307.84 Td (    prev_hash   ea08398ebe27863eaf5125fe8bb97f6429797dd4b656b9c462ee57ff0502406e) Tj ET
+BT /F1 8 Tf 56 298.34 Td (  seq 4753  wealth_suitability_assessed) Tj ET
+BT /F1 8 Tf 56 288.84 Td (    event_hash  12446c1f29dc486ab0266b788de0392bc77ff74aa14a96ce1128009affc98900) Tj ET
+BT /F1 8 Tf 56 279.34 Td (    prev_hash   c679baf2801c5412278cf07978759ebd2209b75f21961d6fcf0afc67fddb5e6f) Tj ET
+BT /F1 8 Tf 56 269.84 Td (  seq 4754  decision_human_reviewed) Tj ET
+BT /F1 8 Tf 56 260.34 Td (    event_hash  bdcb17f7b7ffc388c34d9308e5cf032ec0a779006badae4700fb0eafb2c15128) Tj ET
+BT /F1 8 Tf 56 250.84 Td (    prev_hash   12446c1f29dc486ab0266b788de0392bc77ff74aa14a96ce1128009affc98900) Tj ET
+BT /F2 12.5 Tf 56 223.97 Td (3b. Binding: do the rows still say what was hashed?) Tj ET
+BT /F1 10 Tf 56 206.59 Td (Section 3a shows LINKAGE - that no row was removed or reordered. That is one of) Tj ET
+BT /F1 10 Tf 56 193.59 Td (three separable claims about this log, and the most consequential misreading of) Tj ET
+BT /F1 10 Tf 56 180.59 Td (this document after the one in section 2 is to take the first as evidence of the) Tj ET
+BT /F1 10 Tf 56 167.59 Td (third.) Tj ET
+BT /F1 10 Tf 56 150.59 Td (- LINKAGE - each row's prev_hash is its predecessor's event_hash. Section 3a,) Tj ET
+BT /F1 10 Tf 56 137.59 Td (  and the chain walk in the offline bundle. It says nothing about what any row's) Tj ET
+BT /F1 10 Tf 56 124.59 Td (  payload said.) Tj ET
+BT /F1 10 Tf 56 109.59 Td (- HEAD - the newest row is followed by nothing, so nothing in the chain commits) Tj ET
+BT /F1 10 Tf 56 96.59 Td (  to it. That row is covered only by a signed checkpoint published outside the) Tj ET
+BT /F1 10 Tf 56 83.59 Td (  database \(GET /orgs/:id/audit-chain/checkpoint\). Between the head moving and) Tj ET
+BT /F1 10 Tf 56 70.59 Td (  the next checkpoint being signed, the newest rows are covered by neither.) Tj ET
 0.55 G 0.6 w 56 42 m 539.28 42 l S
-BT /F1 8 Tf 268.84 30 Td (Page 6 of 10) Tj ET
+BT /F1 8 Tf 268.84 30 Td (Page 6 of 13) Tj ET
 endstream
 endobj
 19 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 20 0 R >>
 endobj
 20 0 obj
-<< /Length 6114 >>
+<< /Length 6208 >>
 stream
-BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 71386234-daae-4896-91fe-4c469cf59af2 - not an AdES signature) Tj ET
+BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 03698737-9f9c-425c-b893-3a5c0bfadcce - not an AdES signature) Tj ET
+0.55 G 0.6 w 56 795.89 m 539.28 795.89 l S
+BT /F1 10 Tf 56 778.39 Td (- BINDING - the mutable rows this decision is judged on STILL SAY what was) Tj ET
+BT /F1 10 Tf 56 765.39 Td (  hashed. This section, and nothing else. A database UPDATE that rewrites the) Tj ET
+BT /F1 10 Tf 56 752.39 Td (  declared model identity leaves linkage byte-identical and fails only this.) Tj ET
+BT /F1 10 Tf 56 737.39 Td (Each event below commits to the contents of a row this decision is judged on.) Tj ET
+BT /F1 10 Tf 56 724.39 Td (The payload is not stored in audit_log - there is no column for it - so it was) Tj ET
+BT /F1 10 Tf 56 711.39 Td (REBUILT from the rows as they stand at export time and is printed here in full.) Tj ET
+BT /F1 10 Tf 56 698.39 Td (That is what makes this checkable rather than asserted: recompute the digest) Tj ET
+BT /F1 10 Tf 56 685.39 Td (yourself and compare.) Tj ET
+BT /F1 8 Tf 56 669.89 Td (  event_hash = SHA256\( framed\(event_type\) || framed\(ref_id\)) Tj ET
+BT /F1 8 Tf 56 660.39 Td (                    || framed\(prev_hash\)  || framed\(payload\) \)) Tj ET
+BT /F1 8 Tf 56 641.39 Td (  framed\(x\)   an 8-byte big-endian length, then x) Tj ET
+BT /F1 8 Tf 56 631.89 Td (  ref_id      the UUID's 16 raw bytes \(empty when there is none\)) Tj ET
+BT /F1 8 Tf 56 622.39 Td (  prev_hash   the raw digest bytes \(empty for the first event in the chain\)) Tj ET
+BT /F1 8 Tf 56 612.89 Td (  payload     canonical JSON of the payload below: sorted keys, no insignificant) Tj ET
+BT /F1 8 Tf 56 603.39 Td (              whitespace, non-ASCII escaped - the same rule as section 5's digest) Tj ET
+BT /F2 9 Tf 56 589.14 Td (seq) Tj ET
+BT /F2 9 Tf 88.4 589.14 Td (Event) Tj ET
+BT /F2 9 Tf 272 589.14 Td (Binds) Tj ET
+BT /F2 9 Tf 428.6 589.14 Td (event_hash) Tj ET
+0.55 G 0.6 w 56 582.39 m 539.28 582.39 l S
+BT /F1 9 Tf 56 570.64 Td (4750) Tj ET
+BT /F1 9 Tf 88.4 570.64 Td (decision_model_attestation_bound) Tj ET
+BT /F1 9 Tf 272 570.64 Td (decision_model_attestations) Tj ET
+BT /F1 9 Tf 428.6 570.64 Td (_k9qIr_tEzWeoSoM) Tj ET
+BT /F1 9 Tf 56 559.14 Td (4751) Tj ET
+BT /F1 9 Tf 88.4 559.14 Td (disclosure_policy_bound) Tj ET
+BT /F1 9 Tf 272 559.14 Td (disclosure_requests.policy) Tj ET
+BT /F1 9 Tf 428.6 559.14 Td (6gg5jr4nhj6vUSX-) Tj ET
+BT /F1 8 Tf 56 542.39 Td (  seq 4750  decision_model_attestation_bound) Tj ET
+BT /F1 8 Tf 56 532.89 Td (    ref_id      03698737-9f9c-425c-b893-3a5c0bfadcce) Tj ET
+BT /F1 8 Tf 56 523.39 Td (    prev_hash   Qb9A0U34CfI2QkTDN1neH7r3Hpa_-T4thnDFnS_I39Y) Tj ET
+BT /F1 8 Tf 56 513.89 Td (    event_hash  _k9qIr_tEzWeoSoMXrOilR1GMr8GSybE5OAYGYXe3CE) Tj ET
+BT /F1 8 Tf 56 504.39 Td (    payload:) Tj ET
+BT /F1 8 Tf 56 494.89 Td (      {) Tj ET
+BT /F1 8 Tf 56 485.39 Td (        "attested_at": "2026-08-19T20:32:27.161863Z",) Tj ET
+BT /F1 8 Tf 56 475.89 Td (        "binding": "decision_model_attestation_binding/v1",) Tj ET
+BT /F1 8 Tf 56 466.39 Td (        "declaration": "model_identified",) Tj ET
+BT /F1 8 Tf 56 456.89 Td (        "input_context_fingerprint": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdc>) Tj ET
+BT /F1 8 Tf 56 447.39 Td (        "model_config_fingerprint": "ababababababababababababababababababababababababababababababab>) Tj ET
+BT /F1 8 Tf 56 437.89 Td (        "model_environment": "production",) Tj ET
+BT /F1 8 Tf 56 428.39 Td (        "model_name": "claude-opus-4",) Tj ET
+BT /F1 8 Tf 56 418.89 Td (        "model_provider": "anthropic",) Tj ET
+BT /F1 8 Tf 56 409.39 Td (        "model_system_prompt_or_policy_id": "policy/suitability/7",) Tj ET
+BT /F1 8 Tf 56 399.89 Td (        "model_timestamp": null,) Tj ET
+BT /F1 8 Tf 56 390.39 Td (        "model_version": "20260514",) Tj ET
+BT /F1 8 Tf 56 380.89 Td (        "no_ai_attestation": null,) Tj ET
+BT /F1 8 Tf 56 371.39 Td (        "org_id": "cf45c9bb-3968-4306-a3b6-377e2a5518f2",) Tj ET
+BT /F1 8 Tf 56 361.89 Td (        "output_fingerprint": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",) Tj ET
+BT /F1 8 Tf 56 352.39 Td (        "prompt_version": "suitability-v7",) Tj ET
+BT /F1 8 Tf 56 342.89 Td (        "request_id": "03698737-9f9c-425c-b893-3a5c0bfadcce",) Tj ET
+BT /F1 8 Tf 56 333.39 Td (        "unidentified_reason": null) Tj ET
+BT /F1 8 Tf 56 323.89 Td (      }) Tj ET
+BT /F1 8 Tf 56 310.39 Td (  seq 4751  disclosure_policy_bound) Tj ET
+BT /F1 8 Tf 56 300.89 Td (    ref_id      03698737-9f9c-425c-b893-3a5c0bfadcce) Tj ET
+BT /F1 8 Tf 56 291.39 Td (    prev_hash   _k9qIr_tEzWeoSoMXrOilR1GMr8GSybE5OAYGYXe3CE) Tj ET
+BT /F1 8 Tf 56 281.89 Td (    event_hash  6gg5jr4nhj6vUSX-i7l_ZCl5fdS2VrnEYu5X_wUCQG4) Tj ET
+BT /F1 8 Tf 56 272.39 Td (    payload:) Tj ET
+BT /F1 8 Tf 56 262.89 Td (      {) Tj ET
+BT /F1 8 Tf 56 253.39 Td (        "binding": "disclosure_policy_binding/v1",) Tj ET
+BT /F1 8 Tf 56 243.89 Td (        "circuit_type": "wealth_suitability",) Tj ET
+BT /F1 8 Tf 56 234.39 Td (        "created_at": "2026-08-19T20:32:27.161863Z",) Tj ET
+BT /F1 8 Tf 56 224.89 Td (        "expires_at": "2026-08-19T20:47:26.731715Z",) Tj ET
+BT /F1 8 Tf 56 215.39 Td (        "nonce_b64": "AN6wltGjqAq8XIf_FA12xYSyiONcZSLeXEEgsDYPUuQ",) Tj ET
+BT /F1 8 Tf 56 205.89 Td (        "org_id": "cf45c9bb-3968-4306-a3b6-377e2a5518f2",) Tj ET
+BT /F1 8 Tf 56 196.39 Td (        "policy": {) Tj ET
+BT /F1 8 Tf 56 186.89 Td (          "categories": [) Tj ET
+BT /F1 8 Tf 56 177.39 Td (            "financial") Tj ET
+BT /F1 8 Tf 56 167.89 Td (          ],) Tj ET
+BT /F1 8 Tf 56 158.39 Td (          "duration_seconds": 900,) Tj ET
+BT /F1 8 Tf 56 148.89 Td (          "max_payload_size": null,) Tj ET
+BT /F1 8 Tf 56 139.39 Td (          "predicates": [],) Tj ET
+BT /F1 8 Tf 56 129.89 Td (          "purpose_hash": [) Tj ET
+BT /F1 8 Tf 56 120.39 Td (            97,) Tj ET
+BT /F1 8 Tf 56 110.89 Td (            2,) Tj ET
+BT /F1 8 Tf 56 101.39 Td (            0,) Tj ET
+BT /F1 8 Tf 56 91.89 Td (            124,) Tj ET
+BT /F1 8 Tf 56 82.39 Td (            47,) Tj ET
+BT /F1 8 Tf 56 72.89 Td (            196,) Tj ET
+BT /F1 8 Tf 56 63.39 Td (            142,) Tj ET
+0.55 G 0.6 w 56 42 m 539.28 42 l S
+BT /F1 8 Tf 268.84 30 Td (Page 7 of 13) Tj ET
+endstream
+endobj
+21 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 22 0 R >>
+endobj
+22 0 obj
+<< /Length 4868 >>
+stream
+BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 03698737-9f9c-425c-b893-3a5c0bfadcce - not an AdES signature) Tj ET
+0.55 G 0.6 w 56 795.89 m 539.28 795.89 l S
+BT /F1 8 Tf 56 779.89 Td (            109,) Tj ET
+BT /F1 8 Tf 56 770.39 Td (            217,) Tj ET
+BT /F1 8 Tf 56 760.89 Td (            83,) Tj ET
+BT /F1 8 Tf 56 751.39 Td (            104,) Tj ET
+BT /F1 8 Tf 56 741.89 Td (            21,) Tj ET
+BT /F1 8 Tf 56 732.39 Td (            131,) Tj ET
+BT /F1 8 Tf 56 722.89 Td (            137,) Tj ET
+BT /F1 8 Tf 56 713.39 Td (            144,) Tj ET
+BT /F1 8 Tf 56 703.89 Td (            225,) Tj ET
+BT /F1 8 Tf 56 694.39 Td (            224,) Tj ET
+BT /F1 8 Tf 56 684.89 Td (            124,) Tj ET
+BT /F1 8 Tf 56 675.39 Td (            254,) Tj ET
+BT /F1 8 Tf 56 665.89 Td (            178,) Tj ET
+BT /F1 8 Tf 56 656.39 Td (            186,) Tj ET
+BT /F1 8 Tf 56 646.89 Td (            5,) Tj ET
+BT /F1 8 Tf 56 637.39 Td (            205,) Tj ET
+BT /F1 8 Tf 56 627.89 Td (            7,) Tj ET
+BT /F1 8 Tf 56 618.39 Td (            254,) Tj ET
+BT /F1 8 Tf 56 608.89 Td (            124,) Tj ET
+BT /F1 8 Tf 56 599.39 Td (            144,) Tj ET
+BT /F1 8 Tf 56 589.89 Td (            198,) Tj ET
+BT /F1 8 Tf 56 580.39 Td (            132,) Tj ET
+BT /F1 8 Tf 56 570.89 Td (            58,) Tj ET
+BT /F1 8 Tf 56 561.39 Td (            103,) Tj ET
+BT /F1 8 Tf 56 551.89 Td (            93) Tj ET
+BT /F1 8 Tf 56 542.39 Td (          ],) Tj ET
+BT /F1 8 Tf 56 532.89 Td (          "session_type": "Custom") Tj ET
+BT /F1 8 Tf 56 523.39 Td (        },) Tj ET
+BT /F1 8 Tf 56 513.89 Td (        "request_id": "03698737-9f9c-425c-b893-3a5c0bfadcce",) Tj ET
+BT /F1 8 Tf 56 504.39 Td (        "user_id": "8fbb731c-78df-4081-8759-98bb9bc2d901") Tj ET
+BT /F1 8 Tf 56 494.89 Td (      }) Tj ET
+BT /F1 10 Tf 56 479.89 Td (What a match shows: the row still contains what it contained when the event was) Tj ET
+BT /F1 10 Tf 56 466.89 Td (written. What it does not show: that the row was TRUE when it was written. The) Tj ET
+BT /F1 10 Tf 56 453.89 Td (model attestation is a forward declaration made when the assessment was opened,) Tj ET
+BT /F1 10 Tf 56 440.89 Td (before the proof existed and before any human reviewed it, and no digest can) Tj ET
+BT /F1 10 Tf 56 427.89 Td (reach back and check it - see migrations/0009_model_attestation_corrections.sql) Tj ET
+BT /F1 10 Tf 56 414.89 Td (for the route a firm has to contradict its own earlier declaration.) Tj ET
+BT /F1 10 Tf 56 397.89 Td (The record's own copy of what was declared when this assessment was opened - the) Tj ET
+BT /F1 10 Tf 56 384.89 Td (exact row the binding event above commits to, preserved verbatim in the sealed) Tj ET
+BT /F1 10 Tf 56 371.89 Td (bytes. Compare it with the payload above leaf for leaf: they must agree, nulls) Tj ET
+BT /F1 10 Tf 56 358.89 Td (included.) Tj ET
+BT /F1 8 Tf 56 343.39 Td (  {) Tj ET
+BT /F1 8 Tf 56 333.89 Td (    "declaration": "model_identified",) Tj ET
+BT /F1 8 Tf 56 324.39 Td (    "identity": {) Tj ET
+BT /F1 8 Tf 56 314.89 Td (      "config_fingerprint": "abababababababababababababababababababababababababababababababab",) Tj ET
+BT /F1 8 Tf 56 305.39 Td (      "environment": "production",) Tj ET
+BT /F1 8 Tf 56 295.89 Td (      "model_name": "claude-opus-4",) Tj ET
+BT /F1 8 Tf 56 286.39 Td (      "model_version": "20260514",) Tj ET
+BT /F1 8 Tf 56 276.89 Td (      "prompt_version": "suitability-v7",) Tj ET
+BT /F1 8 Tf 56 267.39 Td (      "provider": "anthropic",) Tj ET
+BT /F1 8 Tf 56 257.89 Td (      "system_prompt_or_policy_id": "policy/suitability/7",) Tj ET
+BT /F1 8 Tf 56 248.39 Td (      "timestamp": null) Tj ET
+BT /F1 8 Tf 56 238.89 Td (    },) Tj ET
+BT /F1 8 Tf 56 229.39 Td (    "no_ai_attestation": null,) Tj ET
+BT /F1 8 Tf 56 219.89 Td (    "unidentified_reason": null) Tj ET
+BT /F1 8 Tf 56 210.39 Td (  }) Tj ET
+BT /F1 10 Tf 56 195.39 Td (The model block the record serves today, for comparison with the payload above.) Tj ET
+BT /F1 10 Tf 56 182.39 Td (The offline bundle performs that comparison mechanically \(docs/VERIFY.md step) Tj ET
+BT /F1 10 Tf 56 169.39 Td (7e\); it is printed here so a reader of the paper can perform it by eye.) Tj ET
+BT /F1 8 Tf 56 153.89 Td (  {) Tj ET
+BT /F1 8 Tf 56 144.39 Td (    "config_fingerprint": {) Tj ET
+BT /F1 8 Tf 56 134.89 Td (      "state": "recorded",) Tj ET
+BT /F1 8 Tf 56 125.39 Td (      "unpopulated_reason": null,) Tj ET
+BT /F1 8 Tf 56 115.89 Td (      "value": "abababababababababababababababababababababababababababababababab") Tj ET
+BT /F1 8 Tf 56 106.39 Td (    },) Tj ET
+BT /F1 8 Tf 56 96.89 Td (    "environment": {) Tj ET
+BT /F1 8 Tf 56 87.39 Td (      "state": "recorded",) Tj ET
+BT /F1 8 Tf 56 77.89 Td (      "unpopulated_reason": null,) Tj ET
+BT /F1 8 Tf 56 68.39 Td (      "value": "production") Tj ET
+0.55 G 0.6 w 56 42 m 539.28 42 l S
+BT /F1 8 Tf 268.84 30 Td (Page 8 of 13) Tj ET
+endstream
+endobj
+23 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 24 0 R >>
+endobj
+24 0 obj
+<< /Length 4702 >>
+stream
+BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 03698737-9f9c-425c-b893-3a5c0bfadcce - not an AdES signature) Tj ET
+0.55 G 0.6 w 56 795.89 m 539.28 795.89 l S
+BT /F1 8 Tf 56 779.89 Td (    },) Tj ET
+BT /F1 8 Tf 56 770.39 Td (    "model_name": {) Tj ET
+BT /F1 8 Tf 56 760.89 Td (      "state": "recorded",) Tj ET
+BT /F1 8 Tf 56 751.39 Td (      "unpopulated_reason": null,) Tj ET
+BT /F1 8 Tf 56 741.89 Td (      "value": "claude-opus-4") Tj ET
+BT /F1 8 Tf 56 732.39 Td (    },) Tj ET
+BT /F1 8 Tf 56 722.89 Td (    "model_version": {) Tj ET
+BT /F1 8 Tf 56 713.39 Td (      "state": "recorded",) Tj ET
+BT /F1 8 Tf 56 703.89 Td (      "unpopulated_reason": null,) Tj ET
+BT /F1 8 Tf 56 694.39 Td (      "value": "20260514") Tj ET
+BT /F1 8 Tf 56 684.89 Td (    },) Tj ET
+BT /F1 8 Tf 56 675.39 Td (    "prompt_version": {) Tj ET
+BT /F1 8 Tf 56 665.89 Td (      "state": "recorded",) Tj ET
+BT /F1 8 Tf 56 656.39 Td (      "unpopulated_reason": null,) Tj ET
+BT /F1 8 Tf 56 646.89 Td (      "value": "suitability-v7") Tj ET
+BT /F1 8 Tf 56 637.39 Td (    },) Tj ET
+BT /F1 8 Tf 56 627.89 Td (    "provider": {) Tj ET
+BT /F1 8 Tf 56 618.39 Td (      "state": "recorded",) Tj ET
+BT /F1 8 Tf 56 608.89 Td (      "unpopulated_reason": null,) Tj ET
+BT /F1 8 Tf 56 599.39 Td (      "value": "anthropic") Tj ET
+BT /F1 8 Tf 56 589.89 Td (    },) Tj ET
+BT /F1 8 Tf 56 580.39 Td (    "system_prompt_or_policy_id": {) Tj ET
+BT /F1 8 Tf 56 570.89 Td (      "state": "recorded",) Tj ET
+BT /F1 8 Tf 56 561.39 Td (      "unpopulated_reason": null,) Tj ET
+BT /F1 8 Tf 56 551.89 Td (      "value": "policy/suitability/7") Tj ET
+BT /F1 8 Tf 56 542.39 Td (    },) Tj ET
+BT /F1 8 Tf 56 532.89 Td (    "timestamp": {) Tj ET
+BT /F1 8 Tf 56 523.39 Td (      "state": "unpopulated",) Tj ET
+BT /F1 8 Tf 56 513.89 Td (      "unpopulated_reason": "the calling system identified a model but did not supply ai_participat>) Tj ET
+BT /F1 8 Tf 56 504.39 Td (      "value": null) Tj ET
+BT /F1 8 Tf 56 494.89 Td (    }) Tj ET
+BT /F1 8 Tf 56 485.39 Td (  }) Tj ET
+BT /F2 12.5 Tf 56 458.51 Td (3c. AIHOOTS SHA-256 audit chain) Tj ET
+BT /F2 10 Tf 56 441.14 Td (Log) Tj ET
+BT /F1 10 Tf 224 441.14 Td (/Users/prashantsingh/Desktop/memtara-zkp/cro_demo/ai) Tj ET
+BT /F1 10 Tf 224 428.14 Td (hoots_audit.jsonl) Tj ET
+BT /F2 10 Tf 56 415.14 Td (Records read) Tj ET
+BT /F1 10 Tf 224 415.14 Td (1) Tj ET
+BT /F2 10 Tf 56 402.14 Td (Entries matching this) Tj ET
+BT /F2 10 Tf 56 389.14 Td (assessment) Tj ET
+BT /F1 10 Tf 224 402.14 Td (0) Tj ET
+BT /F1 10 Tf 56 372.14 Td (No entry in the supplied log carries a proof digest from this assessment. Either) Tj ET
+BT /F1 10 Tf 56 359.14 Td (this is the wrong log, or the relying party never processed this assessment) Tj ET
+BT /F1 10 Tf 56 346.14 Td (through its gateway. The linkage is by proof_hash: the digests in section 2b are) Tj ET
+BT /F1 10 Tf 56 333.14 Td (what an entry must carry to appear here.) Tj ET
+BT /F1 10 Tf 56 316.14 Td (Proof digests from section 2b with no matching entry in this log \(expected for) Tj ET
+BT /F1 10 Tf 56 303.14 Td (rejected attempts, which never reach a relying party\):) Tj ET
+BT /F1 8 Tf 56 287.64 Td (  b5ae5f9f84aa60aa39b002a254c14d2545455b3440afdbb5809cdbdb1db8594c) Tj ET
+BT /F2 10.5 Tf 56 262.26 Td (3d. audit-verify verdict) Tj ET
+BT /F1 10 Tf 56 245.99 Td (Run as a subprocess against AIHOOTS's own pinned code, reproduced verbatim -) Tj ET
+BT /F1 10 Tf 56 232.99 Td (exit code and both streams. Nothing here is this tool's paraphrase. A line wider) Tj ET
+BT /F1 10 Tf 56 219.99 Td (than the page is clipped rather than re-flowed, with a '>' marking the cut; the) Tj ET
+BT /F1 10 Tf 56 206.99 Td (untruncated text is part of the canonical evidence hashed in section 5.) Tj ET
+BT /F1 8 Tf 56 191.49 Td (  $ python3.14 -m src.verifier.cli /Users/prashantsingh/Desktop/memtara-zkp/cro_demo/aihoots_audit.>) Tj ET
+BT /F1 8 Tf 56 181.99 Td (  exit code: 0) Tj ET
+BT /F1 8 Tf 56 172.49 Td (  --- stdout ---) Tj ET
+BT /F1 8 Tf 56 162.99 Td (  OK: audit chain intact \(/Users/prashantsingh/Desktop/memtara-zkp/cro_demo/aihoots_audit.jsonl\)) Tj ET
+BT /F1 10 Tf 56 147.99 Td (Exit code 0 means every record's stored hash matches its recomputed contents and) Tj ET
+BT /F1 10 Tf 56 134.99 Td (every prev_hash matches its predecessor. It means the log is internally) Tj ET
+BT /F1 10 Tf 56 121.99 Td (consistent; it does not mean the log is complete. A hash chain proves nothing) Tj ET
+BT /F1 10 Tf 56 108.99 Td (was altered, not that nothing was deleted from the end or never written -) Tj ET
+BT /F1 10 Tf 56 95.99 Td (retention and off-box replication remain the firm's obligation.) Tj ET
+0.55 G 0.6 w 56 42 m 539.28 42 l S
+BT /F1 8 Tf 268.84 30 Td (Page 9 of 13) Tj ET
+endstream
+endobj
+25 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 26 0 R >>
+endobj
+26 0 obj
+<< /Length 6115 >>
+stream
+BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 03698737-9f9c-425c-b893-3a5c0bfadcce - not an AdES signature) Tj ET
 0.55 G 0.6 w 56 795.89 m 539.28 795.89 l S
 BT /F2 16 Tf 56 759.89 Td (4. Regulatory mapping) Tj ET
 BT /F1 10 Tf 56 740.59 Td (Neither Memtara nor the gateway is a Licensed Financial Institution or an) Tj ET
@@ -517,16 +794,16 @@ BT /F1 9 Tf 223.4 96.09 Td (submitted public input.) Tj ET
 BT /F1 9 Tf 385.4 142.09 Td (Maintaining the product) Tj ET
 BT /F1 9 Tf 385.4 130.59 Td (master.) Tj ET
 0.55 G 0.6 w 56 42 m 539.28 42 l S
-BT /F1 8 Tf 268.84 30 Td (Page 7 of 10) Tj ET
+BT /F1 8 Tf 266.44 30 Td (Page 10 of 13) Tj ET
 endstream
 endobj
-21 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 22 0 R >>
+27 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 28 0 R >>
 endobj
-22 0 obj
-<< /Length 4912 >>
+28 0 obj
+<< /Length 4913 >>
 stream
-BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 71386234-daae-4896-91fe-4c469cf59af2 - not an AdES signature) Tj ET
+BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 03698737-9f9c-425c-b893-3a5c0bfadcce - not an AdES signature) Tj ET
 0.55 G 0.6 w 56 795.89 m 539.28 795.89 l S
 BT /F2 9 Tf 56 779.14 Td (Obligation) Tj ET
 BT /F2 9 Tf 223.4 779.14 Td (What this pack shows) Tj ET
@@ -591,16 +868,16 @@ BT /F1 10 Tf 56 288.64 Td (is not revocable inside its short lifetime, which is 
 BT /F1 10 Tf 56 275.64 Td (offline validation rather than an oversight. Nothing in this section is a legal) Tj ET
 BT /F1 10 Tf 56 262.64 Td (opinion or a substitute for the firm's own compliance assessment.) Tj ET
 0.55 G 0.6 w 56 42 m 539.28 42 l S
-BT /F1 8 Tf 268.84 30 Td (Page 8 of 10) Tj ET
+BT /F1 8 Tf 266.44 30 Td (Page 11 of 13) Tj ET
 endstream
 endobj
-23 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 24 0 R >>
+29 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 30 0 R >>
 endobj
-24 0 obj
-<< /Length 4681 >>
+30 0 obj
+<< /Length 4682 >>
 stream
-BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 71386234-daae-4896-91fe-4c469cf59af2 - not an AdES signature) Tj ET
+BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 03698737-9f9c-425c-b893-3a5c0bfadcce - not an AdES signature) Tj ET
 0.55 G 0.6 w 56 795.89 m 539.28 795.89 l S
 BT /F2 16 Tf 56 759.89 Td (5. Cryptographic seal) Tj ET
 BT /F2 12.5 Tf 56 728.72 Td (5a. Digest of the evidence) Tj ET
@@ -609,7 +886,7 @@ BT /F1 10 Tf 56 698.34 Td (no insignificant whitespace, the same convention the 
 BT /F1 10 Tf 56 685.34 Td (record hashes - and hashed. Recomputing this digest from a fresh export of the) Tj ET
 BT /F1 10 Tf 56 672.34 Td (same assessment reproduces it exactly; a different value means the underlying) Tj ET
 BT /F1 10 Tf 56 659.34 Td (record moved.) Tj ET
-BT /F1 8 Tf 56 643.84 Td (  canonical evidence SHA-256  32740f0be3df9377263d3300fe7419d1f187164e0d3263b9e3a92e1dea7ad261) Tj ET
+BT /F1 8 Tf 56 643.84 Td (  canonical evidence SHA-256  d34f95964d8f52ad33edcb8d78f7b2eba0272f418eea380f30dc42869c678e00) Tj ET
 BT /F1 10 Tf 56 628.84 Td (The digest deliberately excludes the export timestamp and the tool version, so) Tj ET
 BT /F1 10 Tf 56 615.84 Td (it identifies the evidence rather than the run that printed it. Those two live) Tj ET
 BT /F1 10 Tf 56 602.84 Td (in the sidecar.) Tj ET
@@ -648,23 +925,23 @@ BT /F1 10 Tf 56 93.34 Td (  retrieved today evidences today's DNS, not this issu
 BT /F1 10 Tf 56 80.34 Td (  stops working the day the issuer or that key goes away.) Tj ET
 BT /F1 10 Tf 56 65.34 Td (- Step 2. Take the proof bytes and the public inputs from the firm's records and) Tj ET
 0.55 G 0.6 w 56 42 m 539.28 42 l S
-BT /F1 8 Tf 268.84 30 Td (Page 9 of 10) Tj ET
+BT /F1 8 Tf 266.44 30 Td (Page 12 of 13) Tj ET
 endstream
 endobj
-25 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 26 0 R >>
+31 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents 32 0 R >>
 endobj
-26 0 obj
+32 0 obj
 << /Length 1378 >>
 stream
-BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 71386234-daae-4896-91fe-4c469cf59af2 - not an AdES signature) Tj ET
+BT /F3 8 Tf 56 801.89 Td (Memtara canonical case file - 03698737-9f9c-425c-b893-3a5c0bfadcce - not an AdES signature) Tj ET
 0.55 G 0.6 w 56 795.89 m 539.28 795.89 l S
 BT /F1 10 Tf 56 778.39 Td (  run bb verify against the verification key whose digest is in section 2a,) Tj ET
 BT /F1 10 Tf 56 765.39 Td (  target noir-recursive.) Tj ET
 BT /F1 10 Tf 56 750.39 Td (- Step 3. Read public input 11. It is the verdict in section 2d. Do not read the) Tj ET
 BT /F1 10 Tf 56 737.39 Td (  exit code as the verdict.) Tj ET
 BT /F1 10 Tf 56 722.39 Td (- Step 4. Re-run AIHOOTS's audit-verify over the relying party's log to confirm) Tj ET
-BT /F1 10 Tf 56 709.39 Td (  nothing moved, and match the entries by the proof digest in section 3b.) Tj ET
+BT /F1 10 Tf 56 709.39 Td (  nothing moved, and match the entries by the proof digest in section 3c.) Tj ET
 BT /F1 10 Tf 56 694.39 Td (- Step 5. Compare the SHA-256 of this PDF with the sidecar, and the signature if) Tj ET
 BT /F1 10 Tf 56 681.39 Td (  there is one.) Tj ET
 BT /F1 10 Tf 56 666.39 Td (Step 2 is what distinguishes this from a signed PDF of a spreadsheet. The firm) Tj ET
@@ -672,40 +949,46 @@ BT /F1 10 Tf 56 653.39 Td (cannot produce a proof that verifies against that key
 BT /F1 10 Tf 56 640.39 Td (really was carried out over a vault committed to the root recorded at the time -) Tj ET
 BT /F1 10 Tf 56 627.39 Td (and neither can Memtara.) Tj ET
 0.55 G 0.6 w 56 42 m 539.28 42 l S
-BT /F1 8 Tf 266.44 30 Td (Page 10 of 10) Tj ET
+BT /F1 8 Tf 266.44 30 Td (Page 13 of 13) Tj ET
 endstream
 endobj
 xref
-0 27
+0 33
 0000000000 65535 f 
 0000000015 00000 n 
 0000000064 00000 n 
-0000000184 00000 n 
-0000000279 00000 n 
-0000000379 00000 n 
-0000000482 00000 n 
-0000000829 00000 n 
-0000000981 00000 n 
-0000005481 00000 n 
-0000005634 00000 n 
-0000011041 00000 n 
-0000011195 00000 n 
-0000017780 00000 n 
-0000017934 00000 n 
-0000023295 00000 n 
-0000023449 00000 n 
-0000024226 00000 n 
-0000024380 00000 n 
-0000029737 00000 n 
-0000029891 00000 n 
-0000036058 00000 n 
-0000036212 00000 n 
-0000041177 00000 n 
-0000041331 00000 n 
-0000046065 00000 n 
-0000046219 00000 n 
+0000000205 00000 n 
+0000000300 00000 n 
+0000000400 00000 n 
+0000000503 00000 n 
+0000000834 00000 n 
+0000000986 00000 n 
+0000005446 00000 n 
+0000005599 00000 n 
+0000011189 00000 n 
+0000011343 00000 n 
+0000017865 00000 n 
+0000018019 00000 n 
+0000023194 00000 n 
+0000023348 00000 n 
+0000025027 00000 n 
+0000025181 00000 n 
+0000031778 00000 n 
+0000031932 00000 n 
+0000038193 00000 n 
+0000038347 00000 n 
+0000043268 00000 n 
+0000043422 00000 n 
+0000048177 00000 n 
+0000048331 00000 n 
+0000054499 00000 n 
+0000054653 00000 n 
+0000059619 00000 n 
+0000059773 00000 n 
+0000064508 00000 n 
+0000064662 00000 n 
 trailer
-<< /Size 27 /Root 1 0 R /Info 6 0 R >>
+<< /Size 33 /Root 1 0 R /Info 6 0 R >>
 startxref
-47650
+66093
 %%EOF

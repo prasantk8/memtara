@@ -48,11 +48,15 @@ from typing import Any
 try:  # pragma: no cover - exercised by whichever layout is in use
     from scripts.bundle.evidence_ops import (
         BB_VERIFIER_TARGET,
+        BINDING_EVENTS_FILENAME,
+        MODEL_ATTESTATION_BOUND,
         OUTCOME_INDEX,
         PUBLIC_INPUT_NAMES,
         canonical_bytes,
+        compare_model_identity,
         outcome_from_public_inputs,
         pack_public_inputs,
+        recompute_binding_event,
         select_subject_proof,
         sha256_hex,
         verdict_words,
@@ -63,11 +67,15 @@ except ImportError:  # pragma: no cover - the in-bundle layout
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from evidence_ops import (  # type: ignore[no-redef]
         BB_VERIFIER_TARGET,
+        BINDING_EVENTS_FILENAME,
+        MODEL_ATTESTATION_BOUND,
         OUTCOME_INDEX,
         PUBLIC_INPUT_NAMES,
         canonical_bytes,
+        compare_model_identity,
         outcome_from_public_inputs,
         pack_public_inputs,
+        recompute_binding_event,
         select_subject_proof,
         sha256_hex,
         verdict_words,
@@ -571,9 +579,17 @@ def step_7_audit_chains(bundle: Path, pack: dict | None, report: Report) -> None
         )
         detail.append(
             "WHAT PROTECTS WHAT: a hash chain protects every record that has been FOLLOWED by "
-            "another record — the follower's prev_hash is what pins it. The newest record in "
-            "the chain has no follower, so nothing commits to it. Treat the most recent event "
-            "here as unprotected until step 7c reports a checkpoint."
+            "another record, OR covered by a signed checkpoint. The follower's prev_hash is "
+            "what pins it; the newest record has no follower, so only a checkpoint reaches it. "
+            "Treat the most recent event here as unprotected until step 7c reports one — and "
+            "note that a checkpoint is signed after the events it pins, so a window always "
+            "remains in which the newest rows are covered by neither."
+        )
+        detail.append(
+            "AND WHAT THIS DOES NOT COVER AT ALL: whether the mutable rows this decision is "
+            "judged on still SAY what was hashed. Linkage is unaffected by a database UPDATE "
+            "against decision_model_attestations — byte-identical before and after — and that "
+            "is step 7d's subject, not this one's."
         )
         detail.append(
             "WHAT THIS CANNOT SHOW: Memtara's chain is global across tenants, so this "
@@ -587,6 +603,8 @@ def step_7_audit_chains(bundle: Path, pack: dict | None, report: Report) -> None
 
     step_7b_aihoots(bundle, report)
     step_7c_chain_checkpoint(bundle, report)
+    events = step_7d_binding_events(bundle, pack, report)
+    step_7e_model_agreement(pack, events, report)
 
 
 def step_7c_chain_checkpoint(bundle: Path, report: Report) -> None:
@@ -612,17 +630,24 @@ def step_7c_chain_checkpoint(bundle: Path, report: Report) -> None:
             title,
             INFO,
             [
-                f"{CHECKPOINT_FILENAME} is not in this bundle. No deployment produces one yet.",
-                "WHAT IS THEREFORE UNPROTECTED: the newest event in audit_chain_segment.jsonl. "
-                "A chain protects a record by having a later record commit to it, and the last "
-                "record has no later record. Memtara's log also stores no payload column, so "
-                "that row cannot be recomputed from its own contents either.",
-                "WHAT THE CHECKPOINT WILL ADD: a signed statement, published independently of "
-                "any single bundle, that the chain head was at a named position at a named "
-                "time. That closes the gap in one direction — an event appended, altered or "
-                "dropped after the checkpoint stops being invisible — and it does NOT close it "
-                "in the other: a checkpoint still cannot show that an event which was never "
-                "written should have been.",
+                f"{CHECKPOINT_FILENAME} is not in this bundle. This builder does not fetch one "
+                "yet — which is a statement about this bundle, NOT about the deployment: "
+                "audit/checkpoint.rs signs them and GET /orgs/:id/audit-chain/checkpoint serves "
+                "them. Ask the firm for the checkpoint covering the newest event below.",
+                "WHAT IS THEREFORE UNPROTECTED HERE: the newest event in "
+                "audit_chain_segment.jsonl. A chain protects a record by having a later record "
+                "commit to it, and the last record has no later record. Memtara's log also "
+                "stores no payload column, so that row cannot be recomputed from its own "
+                "contents either.",
+                "WHAT A CHECKPOINT ADDS: a signed statement, published independently of any "
+                "single bundle, that the chain head was at a named position with a named hash "
+                "at a named time, over a named row count — the count being what makes "
+                "truncation detectable as well as alteration. It does NOT close the gap in the "
+                "other direction: a checkpoint cannot show that an event which was never "
+                "written should have been, and it is necessarily made AFTER the events it "
+                "pins, so the newest rows are covered by neither mechanism until the next one "
+                "is signed. That window is the checkpointing interval; VERIFY.md step 7 names "
+                "the defaults and tells you to ask for this deployment's.",
             ],
             integrity=False,
         )
@@ -689,6 +714,247 @@ def step_7b_aihoots(bundle: Path, report: Report) -> None:
         "nothing was deleted from the end or never written."
     )
     report.add("7b", title, PASS if proc.returncode == 0 else FAIL, detail)
+
+
+def step_7d_binding_events(bundle: Path, pack: dict | None, report: Report) -> list[dict]:
+    """Recompute each binding event's digest here, from the material carried.
+
+    THE THIRD CLAIM. Step 7 checks LINKAGE — that no row was removed or
+    reordered. Step 7c is about the HEAD — that the newest row, which nothing
+    in the chain follows, is committed to from outside the database. This step
+    checks BINDING: that the mutable rows this decision is judged on STILL SAY
+    what was hashed.
+
+    They are three separable claims and only the third survives a database
+    write against `decision_model_attestations`. An examiner who reads an
+    intact chain as evidence that a decision's model identity is intact is
+    making precisely the error that produced finding 4 in
+    docs/BREAK_IT_FINDINGS.md, so the three are reported separately, in three
+    steps, and each says what it does not cover.
+
+    Nothing here reads a verdict from the bundle. `audit_binding_events.jsonl`
+    carries the inputs — event_type, ref_id, prev_hash, the recorded digest and
+    the rebuilt payload — and the digest is recomputed on this machine. That is
+    the whole point of the file: Memtara's verdict about a bundle Memtara built
+    is not evidence, and a bundle that carried it would have added nothing.
+
+    Returns the parsed events so step 7e can cross-check them without re-reading
+    the file (and, more importantly, so it cannot silently run against a
+    different set than the one checked here).
+    """
+    title = "Each binding event re-hashes to the digest the chain recorded"
+    path = bundle / BINDING_EVENTS_FILENAME
+
+    construction = [
+        "event_hash = SHA256( framed(event_type) || framed(ref_id)",
+        "                  || framed(prev_hash)  || framed(payload) )",
+        "  framed(x)   8-byte big-endian length, then x   (audit/mod.rs::write_framed)",
+        "  ref_id      the UUID's 16 raw bytes, empty when there is none",
+        "  prev_hash   the raw digest bytes, empty for the first event in the chain",
+        "  payload     canonical JSON of rebuilt_payload: sorted keys, tight separators,",
+        "              non-ASCII escaped. audit/binding.rs refuses at WRITE time to record",
+        "              any binding payload whose hashed bytes differ from that form, which",
+        "              is what makes this recomputation possible in Python at all.",
+    ]
+
+    if not path.exists():
+        report.add(
+            "7d",
+            title,
+            NOT_RUN,
+            [
+                f"{BINDING_EVENTS_FILENAME} is not in this bundle, so nothing about the CONTENTS "
+                "of the rows behind this decision could be checked here.",
+                "See `absent` in MANIFEST.json for why the builder did not carry it. This is NOT "
+                "the same as a clean result: an absent check is not a passed one, and step 7's "
+                "PASS says only that rows were not removed or reordered — a database UPDATE that "
+                "rewrote this decision's declared model identity leaves step 7 byte-identical "
+                "and would have been caught only here.",
+            ],
+        )
+        return []
+
+    events: list[dict] = []
+    malformed: list[str] = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except ValueError:
+            malformed.append(f"line {number} is not valid JSON")
+
+    # The file must agree with the record it was extracted from, the same way
+    # audit_chain_segment.jsonl must. It is a working copy, not a second
+    # source, and a divergence between the two is a finding on its own.
+    carried = (pack or {}).get("binding_replay")
+    mismatch = []
+    if isinstance(carried, dict) and carried.get("supplied"):
+        if events != (carried.get("events") or []):
+            mismatch.append(
+                f"{BINDING_EVENTS_FILENAME} does not match binding_replay.events in "
+                "decision_evidence.json. The two must be identical: one is a copy of the other, "
+                "and the record's copy is inside the bytes the seal covers"
+            )
+
+    # A binding event whose ref_id is not this decision's is not this
+    # decision's evidence, however cleanly it re-hashes. Checked because a
+    # correctly-formed event lifted from another assessment would otherwise
+    # satisfy every other line of this step — the same reasoning step 6's
+    # public-input binding follows: a valid proof over someone else's inputs is
+    # still a valid proof, of someone else's case.
+    # Not a failure — an exporter is entitled to scope a pack to one decision —
+    # but never silent either. Two binding event types exist today and both name
+    # the decision; if a third arrives naming something else, this is where its
+    # omission becomes visible instead of being a hole in the file.
+    notes: list[str] = []
+    dropped = (carried or {}).get("events_naming_another_decision") if isinstance(carried, dict) else 0
+    if dropped:
+        notes.append(
+            f"NOTE: the exporter scoped this file to one decision and left out {dropped} binding "
+            "event(s) whose ref_id names something else. Not a failure, and not the whole of what "
+            "the chain binds for this organisation — ask for GET /orgs/:id/audit-log/replay if "
+            "that bears on your conclusion."
+        )
+
+    request_id = (pack or {}).get("request_id")
+    foreign = []
+    if isinstance(request_id, str) and request_id:
+        foreign = sorted({
+            str(e.get("ref_id")) for e in events
+            if isinstance(e, dict) and str(e.get("ref_id")) != request_id
+        })
+        if foreign:
+            mismatch.append(
+                f"{len(foreign)} event(s) name a ref_id that is not this decision "
+                f"({request_id}): " + ", ".join(foreign) + ". A binding event for another "
+                "assessment says nothing about this one, however cleanly it re-hashes"
+            )
+
+    if not events:
+        report.add(
+            "7d",
+            title,
+            NOT_RUN,
+            [
+                f"{BINDING_EVENTS_FILENAME} is present and carries no binding events for this "
+                "decision.",
+                "That is a finding rather than a clean result. Every assessment opened since "
+                "backend/api/src/audit/binding.rs landed writes its binding events in the same "
+                "transaction as the request row, so an assessment with none either predates that "
+                "change or had its events removed — and a removal breaks linkage, which step 7 "
+                "is where to look.",
+            ]
+            + malformed
+            + mismatch
+            + notes,
+        )
+        return events
+
+    detail = [f"{len(events)} binding event(s) carried"] + construction
+    results = []
+    for event in events:
+        outcome = recompute_binding_event(event)
+        results.append(outcome)
+        detail.append("")
+        detail.append(
+            f"  seq {outcome['seq']}  {outcome['event_type']}  ->  {outcome['result'].upper()}"
+        )
+        detail.append(f"    recorded    {outcome['recorded_event_hash']}")
+        detail.append(f"    recomputed  {outcome['recomputed_event_hash'] or '(not computed)'}")
+        detail.append(f"    {outcome['detail']}")
+
+    altered = [r for r in results if r["result"] == "altered"]
+    missing = [r for r in results if r["result"] == "source_row_missing"]
+    unverifiable = [r for r in results if r["result"] == "unverifiable"]
+    detail.extend(["", *malformed, *mismatch, *notes])
+    detail.append(
+        "WHAT A MATCH SHOWS: the payload in this file hashes to the digest the chain recorded, "
+        "so the rows it was rebuilt from still contain what they contained when the event was "
+        "written. WHAT IT DOES NOT SHOW: that those rows were TRUE when written. The model "
+        "attestation is a forward declaration made when the assessment was opened — before the "
+        "proof existed and before anyone reviewed it — and no digest reaches back to check it."
+    )
+    detail.append(
+        "AND NOT LINKAGE. This step re-hashes each event against its own STORED prev_hash, so a "
+        "segment rewritten consistently would pass here and fail step 7. The two are "
+        "complements; neither is the other's summary."
+    )
+
+    if malformed or mismatch or altered:
+        report.add("7d", title, FAIL, detail)
+    elif missing or unverifiable:
+        # Neither is an accusation. A vanished source row is a real incident
+        # but not one this file can settle, and an event this verifier cannot
+        # reproduce is a defect in the verifier until it is explained. Both
+        # block a clean result without manufacturing a failure.
+        report.add("7d", title, NOT_RUN, detail)
+    else:
+        report.add("7d", title, PASS, detail)
+    return events
+
+
+def step_7e_model_agreement(pack: dict | None, events: list[dict], report: Report) -> None:
+    """Do the chain and the record tell the same story about the model?
+
+    THE CHECK THAT CATCHES A TAMPERED BUNDLE. Step 7d proves the carried
+    payload hashes to the carried digest — but an attacker holding only the
+    bundle can edit the record's model block and leave the binding file
+    untouched, and every hash in step 7d still checks out. Only this
+    comparison catches that, and it needs no database and no network.
+
+    `model: null` is treated as its own case throughout. It is a signed
+    assertion that no AI system participated, structurally distinct from an AI
+    that could not be identified and from a block nobody filled in. A record
+    serving it for a decision whose chain-bound attestation names a model is
+    the escalation of finding 4 and is reported as a contradiction.
+    """
+    title = "The record's model identity is the one the chain committed to"
+
+    bound = [
+        e for e in events
+        if e.get("event_type") == MODEL_ATTESTATION_BOUND and isinstance(e.get("rebuilt_payload"), dict)
+    ]
+    if not bound:
+        report.add(
+            "7e",
+            title,
+            NOT_RUN,
+            [
+                "this bundle carries no usable "
+                f"`{MODEL_ATTESTATION_BOUND}` event, so there is no chain-committed identity to "
+                "compare the record against.",
+                "The record's model block — whatever it says, including `model: null` — rests on "
+                "the seal alone here. The seal shows the block was not edited since export; it "
+                "cannot show the block agrees with what was hashed when the decision was opened.",
+            ],
+        )
+        return
+
+    detail: list[str] = []
+    contradictions = 0
+    not_checkable = 0
+    for event in bound:
+        finding = compare_model_identity(event["rebuilt_payload"], pack)
+        detail.append(f"  seq {event.get('seq')}  {event.get('event_type')}")
+        detail.extend(f"    {line}" for line in finding["lines"])
+        detail.append("")
+        if finding["state"] == "contradict":
+            contradictions += 1
+        elif finding["state"] == "not_checkable":
+            not_checkable += 1
+
+    if contradictions:
+        detail.append(
+            "A bundle whose record and whose chain disagree about which model produced a "
+            "decision is the finding. Do not report either identity until it is explained."
+        )
+        report.add("7e", title, FAIL, detail)
+    elif not_checkable:
+        report.add("7e", title, NOT_RUN, detail)
+    else:
+        report.add("7e", title, PASS, detail)
 
 
 def step_8_token(bundle: Path, pack: dict | None, report: Report) -> None:

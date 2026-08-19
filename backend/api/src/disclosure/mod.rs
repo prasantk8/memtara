@@ -213,6 +213,12 @@ async fn create_disclosure_request(
 
     let policy_json = serde_json::to_value(&body.policy)
         .map_err(|e| ApiError::BadRequest(format!("policy did not serialize: {e}")))?;
+    // Checked before the insert, not after: this policy is about to be
+    // committed to the hash chain, and a policy that cannot be canonicalised
+    // is one whose commitment no independent verifier could reproduce.
+    // Refusing here turns a 500 raised after the row exists into a 400
+    // raised instead of creating it.
+    crate::audit::binding::check_policy_is_bindable(&policy_json)?;
     let nonce = generate_nonce();
     let expires_at = Utc::now() + chrono::Duration::seconds(body.ttl_seconds);
 
@@ -252,6 +258,22 @@ async fn create_disclosure_request(
         }),
     )
     .await?;
+
+    // The policy this request will be judged against, bound to the chain.
+    //
+    // The event above names the circuit and the TTL; it has never hashed the
+    // predicate set, which is the part that decides what "satisfied" means.
+    // `policy` is a jsonb column like any other, so until this event existed
+    // an edit to it rewrote the standard a proof was measured by, after the
+    // proof was accepted, with nothing in the chain disagreeing. See
+    // `audit/binding.rs` and finding 5 in docs/BREAK_IT_FINDINGS.md.
+    //
+    // Deliberately a second event rather than a field added to the first:
+    // the payload of a binding event has to be rebuildable from the row it
+    // binds and nothing else, and `ttl_seconds` above is a request-body
+    // value that no column stores exactly.
+    let mut conn = state.db.acquire().await?;
+    crate::audit::binding::record_policy_binding(&mut conn, row.org_id, row.id).await?;
 
     Ok((
         StatusCode::CREATED,

@@ -1371,3 +1371,74 @@ def _seed_client(base_url: str) -> tuple[str, str]:
     )
     conn.close()
     return user_id, token
+
+
+# ---------------------------------------------------------------------
+# Binding integrity — the audit chain committing to the rows a decision is
+# judged on, not merely to the events about it. See
+# backend/api/src/audit/binding.rs.
+# ---------------------------------------------------------------------
+
+
+FRENCH_REASON = "le déploiement utilisé n'était pas celui qui a été déclaré à l'ouverture du dossier"
+ARABIC_REASON = "لم يتم تسجيل هوية النموذج المستخدم في هذا القرار"
+
+
+@pytest.mark.parametrize("reason", [FRENCH_REASON, ARABIC_REASON], ids=["french", "arabic"])
+def test_a_non_english_attestation_reason_records_and_still_replays(memtara_server, desk, reason):
+    """A regression, and the reason it is parametrised by script rather than
+    written once with an accented character.
+
+    Binding events commit to their payload by hashing it, and the payload has
+    to hash to bytes an offline verifier reproduces in Python. The first
+    implementation enforced that by refusing any payload where
+    `serde_json::to_vec` and the canonical form disagreed — which is every
+    payload containing a character outside ASCII, because `to_vec` emits
+    those raw and the canonicaliser escapes them. The result was a 500 on a
+    request that was entirely legitimate, and it fell on exactly the desks
+    least able to argue about it: a French- or Arabic-language compliance
+    team could not record an attestation reason in its own language.
+
+    Binding events now hash the canonical form directly (see
+    `audit::PayloadEncoding`), which is safe because they are new — no
+    historical `event_hash` is recomputed.
+
+    Both halves are asserted. Accepting the request is not enough on its own:
+    a payload that recorded but then failed to rebuild would report every
+    such decision as ALTERED on an untouched database, which is a worse
+    outcome than the 500 it replaced.
+    """
+    request = httpx.post(
+        f"{memtara_server}/api/v1/issue-wealth-request",
+        json={
+            "user_id": desk["user_id"],
+            "product_isin": PRODUCT_ISIN,
+            "ttl_seconds": 900,
+            "ai_participation": {"declaration": "participated_but_unidentified", "reason": reason},
+        },
+        headers={"Authorization": f"Bearer {desk['api_key']}"},
+        timeout=60.0,
+    )
+    assert request.status_code == 201, request.text
+    request_id = request.json()["request_id"]
+
+    replay = httpx.get(
+        f"{memtara_server}/orgs/{desk['org_id']}/audit-log/replay",
+        headers={"Authorization": f"Bearer {desk['api_key']}"},
+        timeout=30.0,
+    )
+    assert replay.status_code == 200, replay.text
+
+    bound = [
+        event
+        for event in replay.json()["events"]
+        if event["ref_id"] == request_id
+        and event["event_type"] == "decision_model_attestation_bound"
+    ]
+    assert len(bound) == 1, bound
+    assert bound[0]["result"] == "intact", bound[0]
+    assert bound[0]["recomputed_event_hash"] == bound[0]["recorded_event_hash"]
+    assert bound[0]["rebuilt_payload"]["unidentified_reason"] == reason, (
+        "the text must round-trip through the canonical form unchanged — a binding that "
+        "silently mangled the reason would commit to something the record does not say"
+    )

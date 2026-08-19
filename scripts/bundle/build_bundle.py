@@ -57,6 +57,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.bundle import BUNDLE_FORMAT_VERSION, MANIFEST_FILENAME, MANIFEST_SIGNATURE_FILENAME
 from scripts.bundle.evidence_ops import (
     BB_VERIFIER_TARGET,
+    BINDING_EVENTS_FILENAME,
     OUTCOME_INDEX,
     canonical_bytes,
     outcome_from_public_inputs,
@@ -67,10 +68,13 @@ from scripts.bundle.evidence_ops import (
 )
 from scripts.bundle.jwks import fetch_jwks, jwks_url, snapshot_from_jwks
 from scripts.export_audit_evidence import (
+    BindingUnavailable,
     ExportError,
     build_pack,
     collect_aihoots,
+    collect_binding,
     decode_proof_token,
+    fetch_decision_evidence,
     load_signing_key,
     pack_proof_hashes,
     read_proof_token_argument,
@@ -392,6 +396,55 @@ def build_bundle(
         "The institution metadata and the thresholds this assessment was measured against.",
     )
 
+    # --- the binding events: the raw material, never the verdict -------------
+    #
+    # `audit_chain_segment.jsonl` above lets an auditor check LINKAGE — that no
+    # row was removed or reordered. This file lets them check something the
+    # chain never claimed: that the mutable rows this decision is judged on
+    # STILL SAY what was hashed. The two are complements. An UPDATE against
+    # `decision_model_attestations` leaves the segment byte-identical and
+    # breaks only this (docs/BREAK_IT_FINDINGS.md finding 4;
+    # backend/api/src/audit/binding.rs).
+    #
+    # What is written is the INPUT to the digest and not Memtara's conclusion
+    # about it. The server's `verdict`, each event's `result` and its
+    # `recomputed_event_hash` are all available to this builder and all
+    # deliberately dropped: they are Memtara's statement about a bundle Memtara
+    # assembled, so shipping them would let an examiner read our answer instead
+    # of computing theirs, and would add nothing checkable if they did.
+    binding = pack.get("binding_replay") or {}
+    if binding.get("supplied"):
+        record(
+            BINDING_EVENTS_FILENAME,
+            _jsonl(binding.get("events") or []),
+            (
+                "The audit_log events that commit to the CONTENTS of the rows this decision is "
+                "judged on — the declared model identity, and the policy it was measured "
+                "against — each with the payload it hashed, rebuilt from those rows. Recompute "
+                "event_hash = SHA256(framed(event_type) || framed(ref_id) || framed(prev_hash) "
+                "|| framed(payload)) and compare; VERIFY.md step 7d gives the exact byte layout. "
+                "WHAT IT DOES NOT PROVE: that the rows were TRUE when written — the model "
+                "attestation is a forward declaration made at open time — and nothing about "
+                "chain linkage, which is audit_chain_segment.jsonl's subject. Memtara's own "
+                "verdict is not in this file on purpose: it is ours to make and yours to check."
+            ),
+        )
+    else:
+        absent.append(
+            {
+                "path": BINDING_EVENTS_FILENAME,
+                "reason": (
+                    "No binding report was obtained when this bundle was built, so the claim that "
+                    "this decision's model identity and policy still say what the chain hashed is "
+                    "UNCHECKED here. It is not satisfied and it is not refuted. Rebuild with an "
+                    "organisation API key that can reach "
+                    "GET /api/v1/wealth-assessments/:id/decision-evidence, whose binding_integrity "
+                    "envelope is where these events come from. "
+                    + (binding.get("unavailable_reason") or "")
+                ).strip(),
+            }
+        )
+
     # --- the chain-head checkpoint, when there is one to carry ---------------
     # RESERVED SLOT — wire-in point for the signed chain-head checkpoint being
     # built separately (see docs/BREAK_IT_FINDINGS.md: the terminal row of the
@@ -418,14 +471,19 @@ def build_bundle(
             {
                 "path": CHECKPOINT_FILENAME,
                 "reason": (
-                    "No signed chain-head checkpoint exists yet in this deployment. A hash "
-                    "chain protects every record that has been FOLLOWED by another record; the "
-                    "last row in the chain is committed to by nothing, and Memtara's log "
-                    "stores no payload column, so it cannot be recomputed either. Until a "
-                    "published checkpoint exists, treat the most recent event in "
-                    "audit_chain_segment.jsonl as unprotected. See VERIFY.md step 7."
+                    "This builder was not given a signed chain-head checkpoint. That is a fact "
+                    "about this bundle and not about the deployment: audit/checkpoint.rs signs "
+                    "them and GET /orgs/:id/audit-chain/checkpoint serves them. A hash chain "
+                    "protects every record that has been FOLLOWED by another record, or covered "
+                    "by a signed checkpoint; the last row in the chain is followed by nothing, "
+                    "and Memtara's log stores no payload column, so it cannot be recomputed "
+                    "either. Without a checkpoint in this bundle, treat the most recent event in "
+                    "audit_chain_segment.jsonl as unprotected, and note that a checkpoint is "
+                    "necessarily signed AFTER the events it pins — so even with one there is a "
+                    "window, the checkpointing interval, in which the newest rows are covered by "
+                    "neither mechanism. See VERIFY.md step 7."
                 ),
-                "status": "reserved — a builder given --chain-checkpoint will populate this",
+                "status": "a builder given --chain-checkpoint will populate this",
             }
         )
 
@@ -670,6 +728,19 @@ def _parser() -> argparse.ArgumentParser:
         help="do not fetch the key set; build without one and record it as absent",
     )
     extra.add_argument(
+        "--binding-json",
+        type=Path,
+        help="a saved GET /api/v1/wealth-assessments/:id/decision-evidence response, instead of "
+        "a live fetch. Its binding_integrity envelope and its model block are what "
+        f"{BINDING_EVENTS_FILENAME} and the record's model_attestation are built from.",
+    )
+    extra.add_argument(
+        "--no-binding-fetch",
+        action="store_true",
+        help="do not fetch the binding report; build without one and record it as absent. The "
+        "bundle then reports the binding check NOT RUN, which is not a pass.",
+    )
+    extra.add_argument(
         "--chain-checkpoint",
         type=Path,
         help=f"a signed chain-head checkpoint, written into the bundle as {CHECKPOINT_FILENAME}. "
@@ -711,7 +782,44 @@ def main(argv: list[str] | None = None) -> int:
             raise BuildError("give either --request-id (live fetch) or --evidence-json (a file)")
 
         token = decode_proof_token(read_proof_token_argument(args.proof_token)) if args.proof_token else None
-        pack = build_pack(evidence, token=token)
+
+        # The binding report. Fetched from the same server as the evidence and
+        # for the same reason the evidence is fetched here: producing new
+        # evidence legitimately requires the system that produced the decision
+        # to still exist. Verifying it never will.
+        #
+        # A file form exists beside the live fetch for exactly the reason the
+        # module header gives for `--evidence-json`: the network path cannot be
+        # regression-tested and cannot be re-run in five years.
+        request_id = evidence.get("request_id") or args.request_id or ""
+        if args.binding_json:
+            binding = collect_binding(
+                json.loads(Path(args.binding_json).read_text(encoding="utf-8")), str(request_id)
+            )
+        elif args.request_id and args.org_api_key and not args.no_binding_fetch:
+            try:
+                binding = collect_binding(
+                    fetch_decision_evidence(args.base_url, str(request_id), args.org_api_key),
+                    str(request_id),
+                )
+            except BindingUnavailable as exc:
+                # Recorded, not swallowed: the bundle is built without the
+                # check and says so in `absent`, which is the same bargain
+                # `--no-jwks-fetch` strikes. A builder that abandoned the whole
+                # bundle over one unreachable endpoint would leave the auditor
+                # with nothing rather than with less.
+                binding = collect_binding(None, str(request_id), reason=str(exc))
+        else:
+            binding = collect_binding(
+                None,
+                str(request_id),
+                reason=(
+                    "the builder was given no --request-id/--org-api-key pair and no "
+                    "--binding-json, so it had no way to obtain one"
+                ),
+            )
+
+        pack = build_pack(evidence, token=token, binding=binding)
         if args.aihoots_audit:
             pack["aihoots"] = collect_aihoots(args.aihoots_audit, pack_proof_hashes(pack))
 

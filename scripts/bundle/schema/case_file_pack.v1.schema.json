@@ -3,7 +3,7 @@
   "$id": "https://memtara.example/schema/case_file_pack/v1.0.0",
   "title": "Memtara Canonical Case File pack, v1",
   "description": "The structure of decision_evidence.json inside an offline verification bundle. This is the projection `build_pack()` in scripts/export_audit_evidence.py copies out of the wealth-assessment evidence endpoint, serialised canonically (sorted keys, no insignificant whitespace) and hashed into the seal's canonical_evidence_sha256. NOTE ON SCOPE: this is the *pack* schema that exists today, not the DecisionEvidence v1 schema specified in the board response. It has no model.*, no human_review.*, no consent.* and no policy_version, because the system does not record them. A schema that declared those fields would describe a record this codebase cannot produce.",
-  "x_schema_version": "1.0.0",
+  "x_schema_version": "1.1.0",
   "x_produced_by": "scripts/export_audit_evidence.py::build_pack",
   "x_every_key_is_required": "Deliberate. A rejected assessment must produce the same shape as an approved one: `suitable` is a tri-state value (true/false/null), never an absent key. Optional fields that vanish on a decline would change the canonical byte layout, which is itself a detectable defect.",
   "type": "object",
@@ -24,7 +24,9 @@
     "audit_chain_excerpt",
     "regulatory_mapping",
     "aihoots",
-    "proof_token"
+    "proof_token",
+    "binding_replay",
+    "model_attestation"
   ],
   "properties": {
     "request_id": { "type": "string" },
@@ -186,6 +188,54 @@
         "claims": { "type": "object" },
         "signature_bytes": { "type": "integer" },
         "verified_by_this_exporter": { "type": "boolean" }
+      }
+    },
+    "binding_replay": {
+      "type": "object",
+      "description": "The audit_log events that commit to the CONTENTS of the mutable rows this decision is judged on, with the payload each one hashed rebuilt from those rows. A different claim from audit_chain_excerpt above: that one shows rows were not removed or reordered, this one shows the rows still say what was hashed. A database UPDATE against decision_model_attestations leaves the first byte-identical and breaks only the second. Memtara's own verdict is deliberately NOT carried: the recorded digest and the payload are here so the verifier recomputes it. See scripts/bundle/evidence_ops.py::recompute_binding_event and docs/VERIFY.md step 7d.",
+      "required": ["supplied", "events"],
+      "properties": {
+        "supplied": { "type": "boolean" },
+        "unavailable_reason": { "type": ["string", "null"] },
+        "note": { "type": "string" },
+        "events_naming_another_decision": {
+          "type": "integer",
+          "description": "How many events the exporter dropped because their ref_id was not this decision's. Carried rather than left silent: two binding event types exist today and both name the decision, and a third is being built for model corrections. If that one names something else, this count goes non-zero and the omission is visible instead of being a hole."
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["seq", "event_type", "ref_id", "created_at", "event_hash", "prev_hash", "rebuilt_payload"],
+            "properties": {
+              "seq": { "type": ["integer", "null"] },
+              "event_type": { "type": "string" },
+              "ref_id": { "type": "string" },
+              "created_at": { "type": "string" },
+              "event_hash": { "type": "string" },
+              "prev_hash": { "type": "string" },
+              "rebuilt_payload": {
+                "type": ["object", "null"],
+                "description": "null means the rows this event commits to no longer exist, which is a different finding from an edit and is reported in different words. It is NEVER an absent key: an absent key would make 'the rows are gone' and 'this exporter did not look' the same two bytes."
+              }
+            }
+          }
+        }
+      }
+    },
+    "model_attestation": {
+      "type": "object",
+      "description": "The model identity the sealed DecisionEvidence record serves, carried so it can be compared with the identity the chain committed to in binding_replay. The `supplied` flag exists because `model: null` is a SIGNED ASSERTION that no AI participated (backend/api/src/evidence/mod.rs::ModelAttestation) and must never be reachable from 'the exporter could not obtain the block'. supplied=false with model=null is silence; supplied=true with model=null is the assertion.",
+      "required": ["supplied", "model", "model_provenance"],
+      "properties": {
+        "supplied": { "type": "boolean" },
+        "model": { "type": ["object", "null"] },
+        "model_provenance": {
+          "type": ["object", "null"],
+          "description": "DecisionEvidence 1.2.0's model_provenance block, carried because `model` stopped being the right thing to compare a binding event against when corrections became possible: `model` serves the organisation's CURRENT statement and a filed correction changes it legitimately, while the binding event commits to the row as declared at open. `as_declared_at_open` inside this block is that row, preserved verbatim. Null for a record written under 1.1.0 or earlier, which has no corrections because the table did not exist."
+        },
+        "unavailable_reason": { "type": ["string", "null"] },
+        "note": { "type": "string" }
       }
     }
   }

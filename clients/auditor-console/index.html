@@ -157,6 +157,10 @@ td.value .hash { word-break: break-all; font-size: .82rem; }
 .s-idle { color: var(--idle); }
 .glyph { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700; }
 
+/* A block's headline: what it says when it has an answer rather than rows. */
+.headline-row { margin: 0 0 .3rem; font-weight: 600; font-size: .9rem; }
+.headline-detail { margin: 0 0 .8rem; color: var(--ink-soft); font-size: .85rem; max-width: 72ch; }
+
 .notes-list { padding-left: 1.1rem; margin: 0; }
 .notes-list li { margin-bottom: .35rem; font-size: .85rem; color: var(--ink-soft); }
 .error { border: 2px solid var(--fail); padding: 1rem; color: var(--fail); font-size: .9rem; }
@@ -383,6 +387,20 @@ footer.doc { margin-top: 2.5rem; padding-top: .75rem; border-top: 1px solid var(
     report.blocks.forEach(function (b) {
       var sec = el('section', 'block');
       sec.appendChild(el('h2', null, b.title));
+      // A block can carry a headline INSTEAD of rows — `model: null` and
+      // `human_review: null` both do, and both are signed assertions rather
+      // than gaps. Until this rendered, the page showed those blocks as an
+      // empty table: the single most important sentence the console has to
+      // say about a decision taken with no AI in the path appeared only in
+      // the exported working paper, and the screen showed nothing at all.
+      if (b.headline) {
+        var hLook = ROW_LOOK[b.headline.state] || ROW_LOOK[R.GAP];
+        var hd = el('p', 'headline-row ' + hLook.cls);
+        hd.appendChild(el('span', 'glyph', hLook.glyph));
+        hd.appendChild(document.createTextNode(' ' + b.headline.text));
+        sec.appendChild(hd);
+        if (b.headline.detail) sec.appendChild(el('p', 'headline-detail', b.headline.detail));
+      }
       var wrapDiv = el('div', 'tablewrap');
       var t = el('table');
       var thead = el('thead');

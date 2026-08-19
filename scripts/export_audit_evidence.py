@@ -311,6 +311,187 @@ def fetch_evidence(base_url: str, request_id: str, api_key: str, timeout: float 
 
 
 # ---------------------------------------------------------------------------
+# Data source 1b — the binding check, and the model block it is about
+#
+# WHY THIS IS A SECOND CALL, AND WHY IT IS TO THE decision-evidence ROUTE
+# ---------------------------------------------------------------------------
+# `fetch_evidence` above reads `/api/v1/wealth-assessments/:id`, the
+# operational view a bank's own tooling already consumes. It does not carry a
+# model block and it does not carry a binding verdict. Both live on the sealed
+# route, `/api/v1/wealth-assessments/:id/decision-evidence`, which returns the
+# `DecisionEvidence` record plus a `binding_integrity` envelope BESIDE it —
+# beside rather than inside, because the record is canonicalised and sealed and
+# a value that depends on when you ask cannot live in bytes that must be
+# identical every time (`respond` in backend/api/src/wealth/evidence.rs).
+#
+# WHAT THIS EXPORT TAKES FROM THAT RESPONSE, AND WHAT IT LEAVES
+# ---------------------------------------------------------------------------
+# Two things and no more: the binding events for this decision, and the record's
+# `model` block. `build_pack` is this tool's redaction boundary and widening it
+# is the one change here that could put a client figure on the paper, so the
+# widening is as narrow as it can be — the model block is the firm's own
+# declaration about its own software and contains nothing about the subject.
+#
+# What is deliberately NOT taken is the server's `verdict`, each event's
+# `result` and its `recomputed_event_hash`. Those are Memtara's claims about
+# Memtara's own evidence. Carrying them into a pack Memtara assembled and
+# printing them would add nothing an examiner could act on; carrying the hash
+# INPUTS instead lets them compute the verdict themselves, which is the whole
+# difference between a verifier and a press release. `scripts/bundle/
+# evidence_ops.py::recompute_binding_event` is where that recomputation lives.
+# ---------------------------------------------------------------------------
+
+
+class BindingUnavailable(Exception):
+    """The binding report could not be obtained. Recorded, never worked around."""
+
+
+def fetch_decision_evidence(base_url: str, request_id: str, api_key: str, timeout: float = 30.0) -> dict:
+    """`GET /api/v1/wealth-assessments/:id/decision-evidence`, whole envelope."""
+    url = (
+        f"{base_url.rstrip('/')}/api/v1/wealth-assessments/"
+        f"{normalise_request_id(request_id)}/decision-evidence"
+    )
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "User-Agent": f"memtara-export/{TOOL_VERSION}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace").strip()
+        raise BindingUnavailable(f"GET {url} answered HTTP {exc.code} {exc.reason}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise BindingUnavailable(f"cannot reach {url}: {exc.reason}") from exc
+    try:
+        envelope = json.loads(body)
+    except ValueError as exc:
+        raise BindingUnavailable(f"{url} did not return JSON: {body[:200]!r}") from exc
+    if not isinstance(envelope, dict):
+        raise BindingUnavailable(f"{url} returned {type(envelope).__name__}, expected an object")
+    return envelope
+
+
+#: The static prose that travels inside the sealed pack beside the events.
+#:
+#: Static on purpose. The export timestamp and the tool version are already
+#: kept out of the pack so that two exports of the same assessment share a
+#: digest (see `build_pack`), and the same rule bars the replay report's
+#: `checked_at`, its org-wide counts and its verdict: every one of them moves
+#: without the evidence moving. The events themselves do not — if they change,
+#: the digest changing is the finding, not a nuisance.
+BINDING_REPLAY_NOTE = (
+    "The audit_log rows that commit to this decision's model attestation and to the policy it "
+    "was measured against, with the payload each one hashed rebuilt from the rows as they stand. "
+    "Memtara's own verdict on them is NOT carried here: recompute it. "
+    "event_hash = SHA256(framed(event_type) || framed(ref_id) || framed(prev_hash) || "
+    "framed(payload)), where framed(x) is an 8-byte big-endian length followed by x, ref_id is "
+    "the UUID's 16 raw bytes, prev_hash is the raw digest bytes, and payload is the canonical "
+    "JSON of rebuilt_payload. See docs/VERIFY.md step 7d."
+)
+
+MODEL_ATTESTATION_NOTE = (
+    "The model identity the sealed DecisionEvidence record serves, carried so it can be compared "
+    "with the identity the hash chain committed to. `supplied: false` means the exporter could "
+    "not obtain it and is NOT the assertion that no AI participated; that assertion is "
+    "`supplied: true` with `model: null`."
+)
+
+
+def _binding_events_for(envelope: dict, request_id: str) -> tuple[list[dict], int]:
+    """This decision's binding events, in chain order, hash inputs only.
+
+    Filtered to `ref_id == request_id` even though the `binding_integrity`
+    envelope is already scoped to this decision, because the org-wide replay
+    endpoint has the same shape and a caller who reaches for it instead must
+    not leak another decision's identifiers into this pack.
+
+    The count of what was dropped is returned and carried, rather than the
+    filter being silent. Two binding event types exist today and both name the
+    decision; a third is being built for model corrections and might not. If it
+    does not, this count goes non-zero and someone notices, which is the whole
+    difference between a filter and a hole. `event_type` is never used to
+    decide what to keep — the verifier iterates whatever types are here.
+    """
+    report = envelope.get("binding_integrity")
+    if not isinstance(report, dict):
+        raise BindingUnavailable(
+            "the decision-evidence response carried no `binding_integrity` envelope. A record "
+            "served with no integrity statement at all is the silence that field exists to end, "
+            "so this is recorded as unavailable rather than treated as a clean result"
+        )
+    wanted = normalise_request_id(request_id)
+    events, dropped = [], 0
+    for event in _as_list(report.get("events")):
+        if not isinstance(event, dict):
+            continue
+        if _s(event.get("ref_id")) != wanted:
+            dropped += 1
+            continue
+        events.append(
+            {
+                "seq": event.get("seq"),
+                "event_type": _s(event.get("event_type")),
+                "ref_id": _s(event.get("ref_id")),
+                "created_at": _s(event.get("created_at")),
+                # Named `event_hash`/`prev_hash` to match `audit_chain_excerpt`
+                # in the same pack. One vocabulary for one concept.
+                "event_hash": _s(event.get("recorded_event_hash")),
+                "prev_hash": _s(event.get("prev_hash")),
+                # Kept as-is, nulls included: this is the material the digest
+                # is recomputed over and any coercion would change the bytes.
+                "rebuilt_payload": event.get("rebuilt_payload"),
+            }
+        )
+    events.sort(key=lambda e: (e["seq"] is None, e["seq"]))
+    return events, dropped
+
+
+def collect_binding(envelope: dict | None, request_id: str, *, reason: str = "") -> tuple[dict, dict]:
+    """`(binding_replay, model_attestation)` for the pack, in both directions."""
+    if envelope is None:
+        unavailable = reason or "the exporter did not fetch the decision-evidence endpoint"
+        return (
+            {"supplied": False, "events": [], "events_naming_another_decision": 0,
+             "note": BINDING_REPLAY_NOTE, "unavailable_reason": unavailable},
+            {"supplied": False, "model": None, "model_provenance": None,
+             "note": MODEL_ATTESTATION_NOTE, "unavailable_reason": unavailable},
+        )
+    events, dropped = _binding_events_for(envelope, request_id)
+    record = envelope.get("decision_evidence")
+    has_model = isinstance(record, dict) and "model" in record
+    return (
+        {"supplied": True, "events": events, "events_naming_another_decision": dropped,
+         "note": BINDING_REPLAY_NOTE, "unavailable_reason": None},
+        {
+            "supplied": bool(has_model),
+            # `model` is `null` for the no-AI assertion, which is why the
+            # `supplied` flag exists: without it, "no AI participated" and
+            # "no block was obtained" would be the same two bytes.
+            "model": record["model"] if has_model else None,
+            # Carried beside it because `model` alone stopped being the right
+            # comparand at schema 1.2.0: it serves the organisation's CURRENT
+            # statement, and a filed correction changes it legitimately. The
+            # binding event commits to the row as declared at open, which is
+            # what `model_provenance.as_declared_at_open` preserves verbatim.
+            # Comparing against that is what keeps the offline check from
+            # reporting a corrected decision as a tampered one.
+            "model_provenance": (record or {}).get("model_provenance")
+            if isinstance(record, dict)
+            else None,
+            "note": MODEL_ATTESTATION_NOTE,
+            "unavailable_reason": None if has_model else
+            "the decision-evidence response carried no `model` key",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Data source 2 — the AIHOOTS audit chain
 # ---------------------------------------------------------------------------
 
@@ -492,7 +673,13 @@ def read_proof_token_argument(value: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_pack(evidence: dict, *, aihoots: dict | None = None, token: dict | None = None) -> dict:
+def build_pack(
+    evidence: dict,
+    *,
+    aihoots: dict | None = None,
+    token: dict | None = None,
+    binding: tuple[dict, dict] | None = None,
+) -> dict:
     """Copy the fields the case file asserts out of the API response.
 
     This is the redaction boundary. `build_document` takes the result of this
@@ -529,6 +716,18 @@ def build_pack(evidence: dict, *, aihoots: dict | None = None, token: dict | Non
                 "public_inputs": [_s(value) for value in _as_list(proof.get("public_inputs"))],
             }
         )
+
+    # Always present, both keys, whether or not a report was obtained — the
+    # rule the pack schema states as `x_every_key_is_required`. A key that
+    # vanished when the binding check could not be run would change the
+    # canonical byte layout for a reason that is about the exporter's
+    # circumstances rather than about the decision, and would let "not
+    # obtained" read as "nothing to report".
+    binding_replay, model_attestation = binding or collect_binding(
+        None,
+        _s(evidence.get("request_id")),
+        reason="this pack was built without a decision-evidence fetch",
+    )
 
     chain = []
     for event in _as_list(evidence.get("audit_chain_excerpt")):
@@ -602,6 +801,12 @@ def build_pack(evidence: dict, *, aihoots: dict | None = None, token: dict | Non
         },
         "proofs": proofs,
         "audit_chain_excerpt": chain,
+        # The chain proves rows were not removed or reordered. These two prove
+        # something the chain never claimed: that the mutable rows this
+        # decision is judged on STILL SAY what was hashed. Separate keys for
+        # separate claims — see docs/VERIFY.md steps 7 and 7d.
+        "binding_replay": binding_replay,
+        "model_attestation": model_attestation,
         "regulatory_mapping": {
             "dfsa_claim_values": [_s(v) for v in _as_list(_get(evidence, "regulatory_mapping", "dfsa"))],
             "dfsa_correct_citation": DFSA_CORRECT_RULE,
@@ -1032,6 +1237,177 @@ def _section_2_receipt(doc: Document, pack: dict, *, verdict: str) -> None:
     doc.page_break()
 
 
+def _section_3b_binding(doc: Document, pack: dict) -> None:
+    """The binding events, printed as inputs to a calculation the reader makes.
+
+    Section 3a prints the chain, and a reader who stops there will conclude
+    that an intact chain means an intact record. It does not, and that
+    conclusion is exactly the one that produced finding 4 in
+    docs/BREAK_IT_FINDINGS.md. So this section states the three claims apart
+    from each other, and then hands over the material for the third rather than
+    Memtara's verdict on it.
+    """
+    doc.heading("3b. Binding: do the rows still say what was hashed?", level=2)
+    doc.paragraph(
+        "Section 3a shows LINKAGE - that no row was removed or reordered. That is one of three "
+        "separable claims about this log, and the most consequential misreading of this document "
+        "after the one in section 2 is to take the first as evidence of the third."
+    )
+    doc.bullet(
+        "LINKAGE - each row's prev_hash is its predecessor's event_hash. Section 3a, and the "
+        "chain walk in the offline bundle. It says nothing about what any row's payload said."
+    )
+    doc.bullet(
+        "HEAD - the newest row is followed by nothing, so nothing in the chain commits to it. "
+        "That row is covered only by a signed checkpoint published outside the database "
+        "(GET /orgs/:id/audit-chain/checkpoint). Between the head moving and the next "
+        "checkpoint being signed, the newest rows are covered by neither."
+    )
+    doc.bullet(
+        "BINDING - the mutable rows this decision is judged on STILL SAY what was hashed. This "
+        "section, and nothing else. A database UPDATE that rewrites the declared model identity "
+        "leaves linkage byte-identical and fails only this."
+    )
+
+    binding = pack["binding_replay"]
+    if not binding.get("supplied"):
+        doc.paragraph(
+            "No binding report was obtained for this assessment, so this claim is UNCHECKED in "
+            "this pack. It is printed as unchecked rather than omitted: a section that is not "
+            "there reads as a system with nothing to report, and an unchecked claim is not a "
+            "satisfied one."
+        )
+        doc.preformatted([f"  {binding.get('unavailable_reason') or MISSING}"])
+        return
+    if not binding["events"]:
+        doc.paragraph(
+            "The binding report was obtained and contains no binding events for this assessment. "
+            "That is itself a finding rather than a clean result: every assessment opened since "
+            "backend/api/src/audit/binding.rs landed writes two of them in the same transaction "
+            "as the request row, so an assessment with none either predates that change or had "
+            "its events removed - and a removal breaks linkage, which section 3a is where to "
+            "look for."
+        )
+        return
+
+    doc.paragraph(
+        "Each event below commits to the contents of a row this decision is judged on. The "
+        "payload is not stored in audit_log - there is no column for it - so it was REBUILT from "
+        "the rows as they stand at export time and is printed here in full. That is what makes "
+        "this checkable rather than asserted: recompute the digest yourself and compare."
+    )
+    doc.preformatted(
+        [
+            "  event_hash = SHA256( framed(event_type) || framed(ref_id)",
+            "                    || framed(prev_hash)  || framed(payload) )",
+            "",
+            "  framed(x)   an 8-byte big-endian length, then x",
+            "  ref_id      the UUID's 16 raw bytes (empty when there is none)",
+            "  prev_hash   the raw digest bytes (empty for the first event in the chain)",
+            "  payload     canonical JSON of the payload below: sorted keys, no insignificant",
+            "              whitespace, non-ASCII escaped - the same rule as section 5's digest",
+        ]
+    )
+    doc.table(
+        ["seq", "Event", "Binds", "event_hash"],
+        [
+            [
+                _s(event["seq"]),
+                event["event_type"],
+                {
+                    "decision_model_attestation_bound": "decision_model_attestations",
+                    "disclosure_policy_bound": "disclosure_requests.policy",
+                }.get(event["event_type"], "(see the payload)"),
+                event["event_hash"][:16],
+            ]
+            for event in binding["events"]
+        ],
+    )
+    for event in binding["events"]:
+        doc.preformatted(
+            [
+                f"  seq {_s(event['seq'])}  {event['event_type']}",
+                f"    ref_id      {event['ref_id']}",
+                f"    prev_hash   {event['prev_hash']}",
+                f"    event_hash  {event['event_hash']}",
+                "    payload:",
+            ]
+            + (
+                [
+                    "      (none - the rows this event commits to no longer exist. The event "
+                    "survives as a",
+                    "       commitment that they did and to what they said; there is nothing "
+                    "left to compare)",
+                ]
+                if event["rebuilt_payload"] is None
+                else [
+                    f"      {line}"
+                    for line in json.dumps(
+                        event["rebuilt_payload"], indent=2, sort_keys=True
+                    ).splitlines()
+                ]
+            )
+        )
+
+    doc.paragraph(
+        "What a match shows: the row still contains what it contained when the event was "
+        "written. What it does not show: that the row was TRUE when it was written. The model "
+        "attestation is a forward declaration made when the assessment was opened, before the "
+        "proof existed and before any human reviewed it, and no digest can reach back and check "
+        "it - see migrations/0009_model_attestation_corrections.sql for the route a firm has to "
+        "contradict its own earlier declaration."
+    )
+
+    model = pack["model_attestation"]
+    if not model.get("supplied"):
+        doc.paragraph(
+            "The sealed record's own model block was not obtained by this export, so the "
+            "identity above could not be compared against the identity the record serves. "
+            f"Reason: {model.get('unavailable_reason') or MISSING}"
+        )
+        return
+    provenance = model.get("model_provenance") or {}
+    declared = provenance.get("as_declared_at_open")
+    if isinstance(declared, dict):
+        doc.paragraph(
+            "The record's own copy of what was declared when this assessment was opened - the "
+            "exact row the binding event above commits to, preserved verbatim in the sealed "
+            "bytes. Compare it with the payload above leaf for leaf: they must agree, nulls "
+            "included."
+        )
+        doc.preformatted(
+            [f"  {line}" for line in json.dumps(declared, indent=2, sort_keys=True).splitlines()]
+        )
+    if provenance.get("corrected"):
+        doc.paragraph(
+            f"This decision carries {_s(provenance.get('correction_count'))} filed correction(s), "
+            "so the model block the record SERVES is the organisation's current statement and is "
+            "expected to differ from the payload bound above. That difference is not tampering "
+            "and must not be read as it - see section 3b's declaration copy for what was "
+            "originally said, and migrations/0009_model_attestation_corrections.sql for why a "
+            "correction is an append rather than an edit."
+        )
+
+    if model["model"] is None:
+        doc.paragraph(
+            "The sealed record serves model: null - a signed statement that no AI system "
+            "participated in this decision. That is an answer, not a blank, and it is the "
+            "strongest claim the schema can carry. It agrees with the binding payload above only "
+            "if that payload's declaration reads no_ai_participated; if it reads anything else, "
+            "the record and the chain contradict each other and neither should be relied on "
+            "until that is explained."
+        )
+        return
+    doc.paragraph(
+        "The model block the record serves today, for comparison with the payload above. The "
+        "offline bundle performs that comparison mechanically (docs/VERIFY.md step 7e); it is "
+        "printed here so a reader of the paper can perform it by eye."
+    )
+    doc.preformatted(
+        [f"  {line}" for line in json.dumps(model["model"], indent=2, sort_keys=True).splitlines()]
+    )
+
+
 def _section_3_chains(doc: Document, pack: dict) -> None:
     doc.heading("3. Audit chains", level=1)
     doc.paragraph(
@@ -1082,7 +1458,9 @@ def _section_3_chains(doc: Document, pack: dict) -> None:
             ]
         )
 
-    doc.heading("3b. AIHOOTS SHA-256 audit chain", level=2)
+    _section_3b_binding(doc, pack)
+
+    doc.heading("3c. AIHOOTS SHA-256 audit chain", level=2)
     aihoots = pack["aihoots"]
     if not aihoots.get("supplied"):
         doc.paragraph(
@@ -1160,7 +1538,7 @@ def _section_3_chains(doc: Document, pack: dict) -> None:
         )
         doc.preformatted([f"  {digest}" for digest in aihoots["proof_hashes_with_no_entry"]])
 
-    doc.heading("3c. audit-verify verdict", level=3)
+    doc.heading("3d. audit-verify verdict", level=3)
     verify = aihoots["audit_verify"]
     if not verify.get("available"):
         doc.paragraph(
@@ -1442,7 +1820,7 @@ def _section_5_seal(
     )
     doc.bullet(
         "Step 4. Re-run AIHOOTS's audit-verify over the relying party's log to confirm nothing "
-        "moved, and match the entries by the proof digest in section 3b."
+        "moved, and match the entries by the proof digest in section 3c."
     )
     doc.bullet(
         "Step 5. Compare the SHA-256 of this PDF with the sidecar, and the signature if there "
@@ -1779,7 +2157,20 @@ def export(
     evidence = fetch_evidence(base_url, request_id, api_key)
     token = decode_proof_token(proof_token) if proof_token else None
 
-    pack = build_pack(evidence, token=token)
+    # A failure here does not stop the export. The binding check is one claim
+    # among several and the rest of the pack — the proof, the verdict, the
+    # chain excerpt — is unaffected by not having it; refusing to write a case
+    # file because a second endpoint was unreachable would trade a partial
+    # record for none. What must not happen is the failure going unrecorded,
+    # so the reason travels inside the sealed bytes and section 3c prints it.
+    try:
+        binding = collect_binding(
+            fetch_decision_evidence(base_url, request_id, api_key), request_id
+        )
+    except BindingUnavailable as exc:
+        binding = collect_binding(None, request_id, reason=str(exc))
+
+    pack = build_pack(evidence, token=token, binding=binding)
     if aihoots_audit is not None:
         # Attached after the fact because the linkage runs the other way: the
         # AIHOOTS entries are selected by the proof digests the pack already

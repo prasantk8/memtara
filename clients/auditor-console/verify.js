@@ -92,6 +92,42 @@
     });
   }
 
+  function concatBytes(parts) {
+    var total = 0, i;
+    for (i = 0; i < parts.length; i++) total += parts[i].length;
+    var out = new Uint8Array(total), at = 0;
+    for (i = 0; i < parts.length; i++) { out.set(parts[i], at); at += parts[i].length; }
+    return out;
+  }
+
+  // An 8-byte big-endian length, then the bytes. The exact framing
+  // backend/api/src/audit/mod.rs::write_framed applies before hashing, and it
+  // is not decoration: without it, event_type "ab" + payload "cd" and
+  // event_type "a" + payload "bcd" hash identically, so the boundary between
+  // two adjacent fields becomes forgeable.
+  function framed(bytes) {
+    var out = new Uint8Array(8 + bytes.length);
+    var n = bytes.length;
+    // Length written a byte at a time rather than through a DataView with a
+    // BigInt: this file targets old browsers on an auditor's locked-down
+    // laptop, and a payload long enough to need more than 53 bits of length
+    // is not a payload that fits in memory anyway.
+    for (var i = 7; i >= 0; i--) { out[i] = n & 0xff; n = Math.floor(n / 256); }
+    out.set(bytes, 8);
+    return out;
+  }
+
+  // A UUID's 16 raw bytes — `Uuid::as_bytes()` on the Rust side, never its
+  // printed form. Returns null (not an empty array) for anything that is not a
+  // UUID, so a caller reports "this cannot be reproduced" rather than hashing
+  // something plausible-looking instead.
+  function uuidBytes(value) {
+    if (value === null || value === undefined || value === '') return new Uint8Array(0);
+    var hex = String(value).trim().replace(/^urn:uuid:/i, '').replace(/-/g, '');
+    if (!/^[0-9a-fA-F]{32}$/.test(hex)) return null;
+    return fromHex(hex);
+  }
+
   // Compare digests without leaking case/whitespace/0x differences into a
   // false FAIL. A digest that differs only in presentation is not tampering.
   function normDigest(s) {
@@ -196,6 +232,10 @@
     ['vk_hash',    function (n) { return n === 'vk_hash'; }],
     ['proof',      function (n) { return /\.proof$/i.test(n); }],
     ['public_inputs', function (n) { return n === 'public_inputs'; }],
+    // Before the generic .jsonl matcher, or the binding file would be read as
+    // the chain segment and its events silently checked for linkage they were
+    // never meant to have. Two files, two claims, two roles.
+    ['binding',    function (n) { return /binding.*\.jsonl$/i.test(n); }],
     ['chain',      function (n) { return /\.jsonl$/i.test(n); }],
     ['jwks',       function (n) { return /^jwks.*\.json$/i.test(n); }],
     ['schema',     function (n) { return /^v\d+\.\d+\.\d+\.json$/i.test(n) || /decision_evidence.*schema.*\.json$/i.test(n); }],
@@ -634,11 +674,15 @@
     /* --- 7.9 chain entry hashes cannot be recomputed here --------------- */
     if (ctx.chain && ctx.chain.length) {
       checks.push(chk('chain_recompute', 'Each chain entry recomputed from its payload', NOT_CHECKED, '', '',
-        'Not possible from this bundle, by design. backend/api/src/audit/mod.rs computes\n'
+        'Not possible for audit_chain_segment.jsonl, by design. backend/api/src/audit/mod.rs computes\n'
         + '  event_hash = SHA256(framed(event_type) || framed(ref_id) || framed(prev_hash) || framed(payload))\n'
         + 'but deliberately does not store `payload`, which makes the chain a commitment scheme rather than a record store. '
-        + 'Given a claimed payload the hash can be checked; this bundle carries no payloads, so linkage (checked above) is the strongest statement available here.'));
+        + 'Given a claimed payload the hash can be checked, and that is exactly what the binding check below does with the one file that carries payloads. '
+        + 'For the chain segment itself, no payloads travel, so linkage (checked above) is the strongest statement available here.'));
     }
+
+    /* --- 7.9b the binding events, re-hashed here ------------------------ */
+    jobs.push(checkBinding(ctx, checks));
 
     /* --- 7.10 issuance JWT against the pinned JWKS ---------------------- */
     jobs.push(checkJwt(ctx, checks));
@@ -684,6 +728,265 @@
     })();
 
     return Promise.all(jobs).then(function () { return checks; });
+  }
+
+  /* ---------------------------------------------------------------------
+     7.9b BINDING — the third claim, and the only one that survives an edit
+          to the firm's database.
+
+     Three separable claims live in Memtara's log and conflating them is how a
+     system ends up describing itself as tamper-evident when one of the three
+     holds:
+
+       LINKAGE  no record was removed or reordered.        7.8, above.
+       HEAD     the newest record, which nothing follows,
+                is committed to from outside the log.      a signed checkpoint.
+       BINDING  the mutable rows this decision is judged
+                on STILL SAY what was hashed.              here, and nowhere else.
+
+     backend/api/src/audit/binding.rs exists because a single UPDATE against
+     `decision_model_attestations` rewrote the model identity the sealed record
+     served and left the log BYTE-IDENTICAL either side of it. Not a chain that
+     failed to notice — there was nothing in it to notice with.
+
+     Memtara's own verdict on these events is deliberately NOT in the bundle.
+     It carries the inputs; this file computes the answer. A console that
+     displayed a supplier's opinion of the supplier's own evidence would have
+     added nothing.
+     --------------------------------------------------------------------- */
+
+  var MODEL_ATTESTATION_BOUND = 'decision_model_attestation_bound';
+
+  // Payload key -> the leaf of the record's `model` block it must agree with.
+  var BOUND_MODEL_LEAVES = {
+    model_provider: 'provider',
+    model_name: 'model_name',
+    model_version: 'model_version',
+    prompt_version: 'prompt_version',
+    model_environment: 'environment',
+    model_config_fingerprint: 'config_fingerprint',
+    model_system_prompt_or_policy_id: 'system_prompt_or_policy_id',
+    model_timestamp: 'timestamp'
+  };
+
+  function parseBindingEvents(ctx) {
+    var out = [], f = ctx.byRole.binding;
+    if (!f) return null;                      // no file at all: a different state from an empty one
+    var lines = (textOf(f) || '').split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i].trim();
+      if (!l) continue;
+      try { out.push(JSON.parse(l)); } catch (e) { out.push({ __parse_error: e.message }); }
+    }
+    return out;
+  }
+
+  function bindingEventHash(event) {
+    var ref = uuidBytes(event.ref_id);
+    if (ref === null) return Promise.resolve({ error: 'ref_id ' + JSON.stringify(event.ref_id) + ' is not a UUID, and audit/mod.rs hashes the identifier\'s 16 raw bytes — there is no defensible way to fold this value in' });
+    var prev = (event.prev_hash === null || event.prev_hash === undefined || event.prev_hash === '')
+      ? new Uint8Array(0) : b64urlToBytes(event.prev_hash);
+    var payload;
+    try { payload = utf8(canonicalString(event.rebuilt_payload)); }
+    catch (e) { return Promise.resolve({ error: 'the payload could not be canonicalised: ' + e.message }); }
+    var message = concatBytes([
+      framed(utf8(String(event.event_type || ''))),
+      framed(ref),
+      framed(prev),
+      framed(payload)
+    ]);
+    return sha256Hex(message).then(function (h) { return { hex: h }; });
+  }
+
+  function checkBinding(ctx, checks) {
+    var events = parseBindingEvents(ctx);
+    ctx.binding = { state: null, events: events || [], modelState: null, note: '' };
+
+    if (events === null) {
+      ctx.binding.state = MISSING;
+      checks.push(chk('binding_recompute', 'Bound rows still say what was fingerprinted', MISSING, '', '',
+        'Not checked: no `audit_binding_events.jsonl` in this bundle.\n'
+        + 'This is NOT the same as a clean result. The chain-linkage check above proves no record was removed or reordered; it says nothing about whether the rows this decision is judged on still CONTAIN what was fingerprinted. '
+        + 'A single database UPDATE against decision_model_attestations rewrites the model identity the sealed record serves and leaves the chain byte-identical — see backend/api/src/audit/binding.rs. Obtain a bundle that carries the binding events.'));
+      checks.push(chk('binding_model', 'Record and chain agree on the model', MISSING, '', '',
+        'Not checked: without the binding events there is no fingerprinted model identity to compare the record against. '
+        + 'The record\'s model block — including a `model: null` assertion that no AI participated — rests on the seal alone here. The seal shows it was not edited since export; it cannot show it agrees with what was fingerprinted when the decision was opened.'));
+      return Promise.resolve();
+    }
+
+    if (!events.length) {
+      ctx.binding.state = MISSING;
+      checks.push(chk('binding_recompute', 'Bound rows still say what was fingerprinted', MISSING, '', '',
+        '`audit_binding_events.jsonl` is present and carries no events.\n'
+        + 'That is a finding rather than a clean result: every assessment opened since binding events landed writes them in the same transaction as the request row, so an assessment with none either predates that change or had them removed — and a removal breaks linkage, which is the check above.'));
+      checks.push(chk('binding_model', 'Record and chain agree on the model', MISSING, '', '',
+        'Not checked: the binding file carries no events, so there is no fingerprinted model identity to compare the record against.'));
+      return Promise.resolve();
+    }
+
+    return Promise.all(events.map(function (e) {
+      if (e.__parse_error) return Promise.resolve({ event: e, error: 'the line is not valid JSON: ' + e.__parse_error });
+      if (!Object.prototype.hasOwnProperty.call(e, 'rebuilt_payload')) {
+        return Promise.resolve({ event: e, error: 'the event carries no `rebuilt_payload` key at all, so there is nothing to fingerprint' });
+      }
+      if (e.rebuilt_payload === null) {
+        return Promise.resolve({ event: e, gone: true });
+      }
+      return bindingEventHash(e).then(function (r) { return { event: e, error: r.error, hex: r.hex }; });
+    })).then(function (results) {
+      var lines = [], bad = 0, unresolved = 0;
+      lines.push('event_hash = SHA256(framed(event_type) || framed(ref_id) || framed(prev_hash) || framed(payload))');
+      lines.push('  framed(x) is an 8-byte big-endian length then x; ref_id is the identifier\'s 16 raw bytes;');
+      lines.push('  prev_hash is the raw fingerprint bytes; payload is the canonical JSON of rebuilt_payload.');
+      results.forEach(function (r) {
+        var e = r.event;
+        var head = '  ' + (e.event_type || '(no event_type)') + '  seq ' + (e.seq === undefined ? '?' : e.seq);
+        if (r.gone) {
+          unresolved++;
+          lines.push(head + '  ->  SOURCE ROW GONE');
+          lines.push('    The rows this event commits to no longer existed when the bundle was built. The event survives as a commitment that they did and to what they said; there is nothing left here to compare it against.');
+          return;
+        }
+        if (r.error) {
+          unresolved++;
+          lines.push(head + '  ->  CANNOT RECOMPUTE');
+          lines.push('    ' + r.error);
+          return;
+        }
+        var recordedHex = toHex(b64urlToBytes(e.event_hash || ''));
+        if (digestsEqual(r.hex, recordedHex)) {
+          lines.push(head + '  ->  INTACT');
+          lines.push('    recomputed ' + r.hex.slice(0, 32) + '…  matches the fingerprint the chain recorded');
+        } else {
+          bad++;
+          lines.push(head + '  ->  ALTERED');
+          lines.push('    recomputed ' + r.hex);
+          lines.push('    recorded   ' + recordedHex);
+        }
+      });
+
+      if (bad) {
+        ctx.binding.state = FAIL;
+        checks.push(chk('binding_recompute', 'Bound rows still say what was fingerprinted', FAIL, '', '',
+          lines.join('\n')
+          + '\nThe details in this bundle do not fingerprint to the value the chain recorded. Either the rows changed after the event was written, or this file was edited afterwards.'
+          + '\nNote that the chain-linkage check above will very likely still show as unbroken. That is the point of this check existing: linkage cannot see an edit to a row\'s contents.'));
+      } else if (unresolved) {
+        ctx.binding.state = MISSING;
+        checks.push(chk('binding_recompute', 'Bound rows still say what was fingerprinted', MISSING, '', '',
+          lines.join('\n')
+          + '\nNothing here is shown to be broken and not everything could be checked. Neither state is an accusation: a vanished source row is a real incident this file cannot settle, and an event this tool cannot reproduce is a defect in the tool until it is explained.'));
+      } else {
+        ctx.binding.state = PASS;
+        checks.push(chk('binding_recompute', 'Bound rows still say what was fingerprinted', PASS,
+          'The rows behind this decision — the model that was declared and the policy it was measured against — still contain exactly what was fingerprinted into the audit chain when the decision was opened. Nobody has edited them since.',
+          'It does not show those rows were TRUE when written: the model attestation is a forward declaration made before the proof existed and before anyone reviewed the decision. And it is not a linkage check — each event is re-fingerprinted against the previous fingerprint it carries, so a run of records rewritten consistently would pass here and fail the check above.',
+          lines.join('\n')));
+      }
+
+      checkBindingModel(ctx, results, checks);
+    });
+  }
+
+  /**
+   * Does the record tell the same story as the chain about the model?
+   *
+   * THE CHECK THAT CATCHES A TAMPERED BUNDLE. The recomputation above proves
+   * the carried payload fingerprints to the carried value; it says nothing
+   * about the record beside it. Someone holding only the bundle edits the
+   * record's model block and leaves the binding file alone — every fingerprint
+   * still checks out, and only this comparison notices.
+   *
+   * `model: null` is its own case and never blurs into "no model named". It is
+   * a signed statement that no AI system participated. A record making it for a
+   * decision whose fingerprinted declaration names a model is the worst shape
+   * this failure takes, and it is reported as a contradiction.
+   */
+  function checkBindingModel(ctx, results, checks) {
+    var ev = ctx.evidence;
+    var usable = results.filter(function (r) {
+      return r.event && r.event.event_type === MODEL_ATTESTATION_BOUND
+        && r.event.rebuilt_payload && typeof r.event.rebuilt_payload === 'object';
+    });
+    if (!usable.length) {
+      ctx.binding.modelState = MISSING;
+      checks.push(chk('binding_model', 'Record and chain agree on the model', MISSING, '', '',
+        'This bundle carries no usable `' + MODEL_ATTESTATION_BOUND + '` event, so there is no fingerprinted model identity to compare the record against.\n'
+        + 'The record\'s model block — whatever it says, including a `model: null` assertion that no AI participated — rests on the seal alone here.'));
+      return;
+    }
+
+    var payload = usable[0].event.rebuilt_payload;
+    var declaration = payload.declaration;
+    var present = ev && Object.prototype.hasOwnProperty.call(ev, 'model');
+    var model = present ? ev.model : undefined;
+    var detail = ['chain-bound declaration  ' + JSON.stringify(declaration)];
+
+    if (!present) {
+      ctx.binding.modelState = MISSING;
+      checks.push(chk('binding_model', 'Record and chain agree on the model', MISSING, '', '',
+        detail.concat([
+          'The record carries no `model` key at all, so there is nothing to compare. An absent key is NOT the `model: null` assertion: absence says nothing, null says — inside the sealed bytes — that no AI took part.'
+        ]).join('\n')));
+      return;
+    }
+
+    var assertsNoAi = model === null;
+    detail.push('record\'s model block     ' + (assertsNoAi ? 'null — a signed assertion that no AI participated' : (typeof model)));
+
+    if (declaration === 'no_ai_participated' && !assertsNoAi) {
+      return contradiction(detail.concat([
+        'CONTRADICTION. The chain committed to a declaration that no AI participated, and the record serves a model block anyway. One of the two was changed after the binding event was written.'
+      ]));
+    }
+    if (declaration && declaration !== 'no_ai_participated' && assertsNoAi) {
+      return contradiction(detail.concat([
+        'CONTRADICTION, and it is the worst shape this failure takes. The record serves `model: null` — the strongest claim the record can make, a signed assertion that no AI system took part — for a decision the chain committed to as ' + JSON.stringify(declaration) + '.',
+        'Do not rely on the no-AI assertion in this record.'
+      ]));
+    }
+    if (assertsNoAi) {
+      ctx.binding.modelState = ASSERTED_ABSENT;
+      checks.push(chk('binding_model', 'Record and chain agree on the model', PASS,
+        'The record\'s statement that no AI system participated in this decision is the statement the audit chain fingerprinted when the decision was opened. It was not added, removed or altered afterwards.',
+        'It does not show the statement was true. It is the firm\'s own declaration about its own process, made when the assessment was opened, and nothing in this bundle can check it against what actually ran.',
+        detail.concat(['stated to have decided instead: ' + JSON.stringify(payload.no_ai_attestation)]).join('\n')));
+      return;
+    }
+
+    var disagreements = [], compared = 0;
+    Object.keys(BOUND_MODEL_LEAVES).sort().forEach(function (boundKey) {
+      var leafKey = BOUND_MODEL_LEAVES[boundKey];
+      var bound = payload[boundKey];
+      var f = readField(model, leafKey);
+      var boundAbsent = bound === null || bound === undefined;
+      var recordAbsent = f.state !== RECORDED;
+      if (boundAbsent && recordAbsent) return;
+      compared++;
+      if (boundAbsent !== recordAbsent || String(bound) !== String(f.value)) {
+        disagreements.push('  ' + leafKey + '\n    chain-bound ' + JSON.stringify(bound === undefined ? null : bound)
+          + '\n    record says ' + JSON.stringify(recordAbsent ? null : f.value));
+      }
+    });
+
+    if (disagreements.length) {
+      return contradiction(detail.concat([
+        disagreements.length + ' of ' + compared + ' compared model fields disagree:'
+      ]).concat(disagreements));
+    }
+    ctx.binding.modelState = RECORDED;
+    checks.push(chk('binding_model', 'Record and chain agree on the model', PASS,
+      'The model identity written in this record is the identity the audit chain fingerprinted when the decision was opened, so neither the record nor the chain entry was edited to agree with the other.',
+      'It does not show the identity was correct. It is the firm\'s own declaration about its own software, and nothing in this bundle can check it against the model that actually ran.',
+      detail.concat([compared + ' model field(s) compared, all in agreement']).join('\n')));
+
+    function contradiction(lines) {
+      ctx.binding.modelState = CONFLICT;
+      checks.push(chk('binding_model', 'Record and chain agree on the model', FAIL, '', '',
+        lines.concat([
+          'The record and the audit chain do not tell the same story about which model produced this decision. Whichever side was edited, the identity in the record is not the identity that was fingerprinted. Do not report either until it is explained.'
+        ]).join('\n')));
+    }
   }
 
   /* --- JWT / JWKS ----------------------------------------------------- */
@@ -858,7 +1161,7 @@
     });
 
     /* ---- Model — the block where the two absent-states must not blur ---- */
-    blocks.push(buildModelBlock(ev));
+    blocks.push(buildModelBlock(ev, ctx));
 
     /* ---- Human ---- */
     var hr = ev.human_review;
@@ -905,7 +1208,37 @@
    *                                  -> GAP, with the reason shown.
    *   model is an object             -> render its fields, each with its own state.
    */
-  function buildModelBlock(ev) {
+  /**
+   * One row, in the Model block, saying whether the audit chain committed to
+   * the identity above it.
+   *
+   * Put here rather than only in the checks table because this is where a
+   * reader looks when they want to know what the model was, and "the chain
+   * agrees" and "nothing checks this" have to be legible in the same glance as
+   * the identity itself. It is also the one row whose ASSERTED-ABSENT state is
+   * reachable — a fingerprinted `no_ai_participated` declaration — so it is
+   * where the fifth glyph, [-], appears on a printed page.
+   */
+  function bindingRow(ctx) {
+    var s = ctx && ctx.binding ? ctx.binding.modelState : null;
+    if (s === RECORDED) {
+      return { label: 'Bound to the audit chain', state: RECORDED, value: 'yes — the chain committed to this identity',
+        reason: null, mono: false,
+        note: 'The identity above is the one fingerprinted into the audit chain when this decision was opened. It has not been edited since.' };
+    }
+    if (s === ASSERTED_ABSENT) {
+      return { label: 'Bound to the audit chain', state: ASSERTED_ABSENT, value: null, reason: null, mono: false,
+        note: 'The chain committed to a declaration that no AI system participated. The assertion in this record is the assertion that was fingerprinted, not one added afterwards.' };
+    }
+    if (s === CONFLICT) {
+      return { label: 'Bound to the audit chain', state: CONFLICT, value: null, reason: null, mono: false,
+        note: 'The record and the chain disagree about which model produced this decision. See the binding check for the fields that differ. Do not report either identity until it is explained.' };
+    }
+    return { label: 'Bound to the audit chain', state: GAP, value: null, reason: null, mono: false,
+      note: 'Nothing in this bundle fingerprints the identity above. A database edit to the model this decision was recorded against would leave the audit chain unchanged and would not be visible anywhere in this pack. Obtain a bundle carrying audit_binding_events.jsonl.' };
+  }
+
+  function buildModelBlock(ev, ctx) {
     var present = ev && Object.prototype.hasOwnProperty.call(ev, 'model');
     if (!present) {
       return {
@@ -915,7 +1248,7 @@
           detail: 'The record is silent on whether an AI or model system took part in this decision. '
                 + 'This is a gap, not a denial. Nothing here shows that no model was involved — only that, if one was, this record does not identify it. '
                 + 'Treat any claim about model governance for this case as unevidenced.'
-        }, rows: []
+        }, rows: [bindingRow(ctx)]
       };
     }
     var m = ev.model;
@@ -927,7 +1260,7 @@
           detail: 'The record states, inside the sealed and signed bytes, that no AI or model system took part in this decision. '
                 + 'This is an answer, not a gap: the assertion is covered by the same digest as the rest of the record, so it could not be added or removed afterwards without breaking the seal. '
                 + 'No model governance evidence is expected for this case.'
-        }, rows: []
+        }, rows: [bindingRow(ctx)]
       };
     }
     if (m && typeof m === 'object' && typeof m.state === 'string' && Object.prototype.hasOwnProperty.call(m, 'value')) {
@@ -938,7 +1271,7 @@
             text: 'NO AI SYSTEM PARTICIPATED — signed assertion',
             detail: 'The record asserts this block does not apply to this decision. Stated reason: ' + (m.unpopulated_reason || '(none given)')
                   + ' This is an answer, not a gap.'
-          }, rows: []
+          }, rows: [bindingRow(ctx)]
         };
       }
       if (m.state === 'unpopulated') {
@@ -948,7 +1281,7 @@
             text: 'UNRECORDED — the record admits it does not know',
             detail: 'The record explicitly states this block was not populated. Stated reason: ' + (m.unpopulated_reason || '(none given)')
                   + ' This is a gap, not a denial: it does not show that no model was involved.'
-          }, rows: []
+          }, rows: [bindingRow(ctx)]
         };
       }
       m = m.value || {};
@@ -963,7 +1296,8 @@
         row('System prompt / policy', readField(m, 'system_prompt_or_policy_id'), { mono: true, meaning: 'The instructions given to the model are not identified.' }),
         row('Model invoked at', readField(m, 'timestamp'), { mono: true, meaning: 'When the model was called is not recorded.' }),
         row('Input context fingerprint', readField(ev, 'input_context_fingerprint'), { mono: true, meaning: 'What the model was shown is not fingerprinted, so it cannot be shown which inputs produced this output.' }),
-        row('Output fingerprint', readField(ev, 'output_fingerprint'), { mono: true, meaning: 'The model\'s output is not fingerprinted, so the recorded decision cannot be tied to what the model actually returned.' })
+        row('Output fingerprint', readField(ev, 'output_fingerprint'), { mono: true, meaning: 'The model\'s output is not fingerprinted, so the recorded decision cannot be tied to what the model actually returned.' }),
+        bindingRow(ctx)
       ]
     };
   }
@@ -1134,7 +1468,9 @@
     return runChecks(ctx).then(function (checks) {
       // Stable order regardless of which promise settled first.
       var order = ['canonical_digest', 'pdf_digest', 'vkey_digest', 'proof_digest', 'zk_pairing',
-        'public_inputs', 'outcome_binding', 'chain_linkage', 'chain_recompute', 'jwt', 'jwt_binding', 'seal_origin', 'schema'];
+        'public_inputs', 'outcome_binding', 'chain_linkage', 'chain_recompute',
+        'binding_recompute', 'binding_model',
+        'jwt', 'jwt_binding', 'seal_origin', 'schema'];
       checks.sort(function (a, b) {
         var ia = order.indexOf(a.id), ib = order.indexOf(b.id);
         return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
@@ -1264,6 +1600,7 @@
       toHex: toHex, fromHex: fromHex, sha256Hex: sha256Hex,
       canonicalString: canonicalString, indexBundle: indexBundle,
       readField: readField, senseOf: senseOf,
+      framed: framed, uuidBytes: uuidBytes, bindingEventHash: bindingEventHash,
       suitableFromPublicInputs: suitableFromPublicInputs,
       digestsEqual: digestsEqual, PI: PI
     },

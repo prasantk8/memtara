@@ -1,13 +1,13 @@
 {
   "authentication": "UNSIGNED. Tamper-evident by digest, unauthenticated as to origin. No ephemeral key was generated: a signature verifying against a key nobody holds is worse than none, because it looks like one that means something.",
-  "canonical_evidence_sha256": "32740f0be3df9377263d3300fe7419d1f187164e0d3263b9e3a92e1dea7ad261",
-  "created_at": "2026-08-19T09:23:31Z",
+  "canonical_evidence_sha256": "d34f95964d8f52ad33edcb8d78f7b2eba0272f418eea380f30dc42869c678e00",
+  "created_at": "2026-08-19T20:32:28Z",
   "pdf": {
-    "bytes": 48268,
+    "bytes": 66831,
     "filename": "case_file.pdf",
-    "sha256": "5bae21eb4df614c6c3edc4daefc41dde736cc3fc1c8173663a1fdf3ef07b1269"
+    "sha256": "e803a225f59dfe4dcd7da172160b1c2470cab07cee595315a2befeb2c200d279"
   },
-  "request_id": "71386234-daae-4896-91fe-4c469cf59af2",
+  "request_id": "03698737-9f9c-425c-b893-3a5c0bfadcce",
   "seal_version": 1,
   "signature": null,
   "tool": "scripts/export_audit_evidence.py",

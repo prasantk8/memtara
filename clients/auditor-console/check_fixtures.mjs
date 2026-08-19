@@ -48,9 +48,14 @@ function stateOfRow(report, blockId, labelStartsWith) {
   return row ? row.state : null;
 }
 
+function stateOfCheck(report, id) {
+  const c = (report.checks || []).find((x) => x.id === id);
+  return c ? c.state : null;
+}
+
 const results = {};
 
-for (const dir of ['approval', 'rejection', 'broken', 'no-ai']) {
+for (const dir of ['approval', 'rejection', 'broken', 'no-ai', 'binding-altered', 'binding-record-mismatch']) {
   const report = await AC.analyse(loadBundle(dir));
   results[dir] = report;
   console.log(`\n${dir}`);
@@ -116,6 +121,88 @@ assert('the exported working paper states the two findings must not be combined'
   /MUST NOT BE COMBINED/i.test(paper));
 assert('the exported working paper names the decline',
   /REJECT|NOT SUITABLE|DECLINE/i.test(paper));
+
+// 7. BINDING. The third claim about the audit log, and the only one that
+//    survives someone editing the firm's database. Linkage says no record was
+//    removed or reordered; it says nothing about whether the rows behind a
+//    decision still CONTAIN what was fingerprinted. See
+//    backend/api/src/audit/binding.rs.
+assert('an untouched binding recomputes to the fingerprint the chain recorded',
+  stateOfCheck(results.approval, 'binding_recompute') === AC.STATES.PASS,
+  `state was ${stateOfCheck(results.approval, 'binding_recompute')}`);
+
+assert('an untouched record and its chain entry agree about the model',
+  stateOfCheck(results.approval, 'binding_model') === AC.STATES.PASS,
+  `state was ${stateOfCheck(results.approval, 'binding_model')}`);
+
+// The no-AI case, which is the one a careless implementation gets wrong.
+// `model: null` is a signed assertion that no AI participated, and its binding
+// must verify as an ANSWER — never as a blank that happens not to fail.
+assert('a fingerprinted "no AI participated" assertion verifies as an answer, not a blank',
+  stateOfCheck(results['no-ai'], 'binding_recompute') === AC.STATES.PASS &&
+  stateOfCheck(results['no-ai'], 'binding_model') === AC.STATES.PASS,
+  `recompute=${stateOfCheck(results['no-ai'], 'binding_recompute')} model=${stateOfCheck(results['no-ai'], 'binding_model')}`);
+
+assert('the no-AI assertion is shown as ASSERTED-ABSENT in the model block, not as a gap',
+  stateOfRow(results['no-ai'], 'model', 'bound to the audit chain') === AC.ROWS.ASSERTED_ABSENT,
+  `state was ${stateOfRow(results['no-ai'], 'model', 'bound to the audit chain')}`);
+
+// THE ONE THAT MATTERS FOR THIS FEATURE. A database UPDATE rewrites the row,
+// so the record and the rebuilt payload BOTH name the new model — they came
+// from the same row. Only the recorded fingerprint, which the attacker cannot
+// reach, still describes the original. The recomputation is the only thing
+// that sees it, and the record/chain cross-check correctly does not.
+assert('a database edit to the model row is caught by the recomputation',
+  stateOfCheck(results['binding-altered'], 'binding_recompute') === AC.STATES.FAIL,
+  `state was ${stateOfCheck(results['binding-altered'], 'binding_recompute')}`);
+
+assert('that edit degrades integrity and leaves the outcome alone',
+  results['binding-altered'].integrity.verdict === 'INVALID' &&
+  results['binding-altered'].outcome.sense === 'approve',
+  `${results['binding-altered'].integrity.verdict} / ${results['binding-altered'].outcome.sense}`);
+
+// And the mirror image: someone edits the RECORD inside the bundle and leaves
+// the binding file alone. Every fingerprint still checks out. Only the
+// cross-check notices, which is what makes a tampered bundle detectable with
+// no database and no network.
+assert('a bundle whose record was edited passes the recomputation and fails the cross-check',
+  stateOfCheck(results['binding-record-mismatch'], 'binding_recompute') === AC.STATES.PASS &&
+  stateOfCheck(results['binding-record-mismatch'], 'binding_model') === AC.STATES.FAIL,
+  `recompute=${stateOfCheck(results['binding-record-mismatch'], 'binding_recompute')} model=${stateOfCheck(results['binding-record-mismatch'], 'binding_model')}`);
+
+assert('the two binding checks are independent — neither fixture fails both',
+  stateOfCheck(results['binding-altered'], 'binding_model') !== AC.STATES.FAIL &&
+  stateOfCheck(results['binding-record-mismatch'], 'binding_recompute') !== AC.STATES.FAIL);
+
+// 8. AN ABSENT CHECK IS NOT A PASSED ONE. A bundle with no binding events must
+//    never render as though the binding held — that principle is load-bearing
+//    across this codebase and it is the reason INCOMPLETE exists at all.
+assert('a bundle carrying no binding events reports the check unperformed, never passed',
+  stateOfCheck(results.rejection, 'binding_recompute') === AC.STATES.MISSING &&
+  stateOfCheck(results.rejection, 'binding_model') === AC.STATES.MISSING &&
+  results.rejection.integrity.verdict !== 'VALID',
+  `recompute=${stateOfCheck(results.rejection, 'binding_recompute')} verdict=${results.rejection.integrity.verdict}`);
+
+assert('with no binding events the model block says so rather than showing a tick',
+  stateOfRow(results.rejection, 'model', 'bound to the audit chain') === AC.ROWS.GAP,
+  `state was ${stateOfRow(results.rejection, 'model', 'bound to the audit chain')}`);
+
+// 9. There is still no third verdict card: binding lives inside the integrity
+//    finding, because a broken binding is an integrity failure and never an
+//    outcome. Asserted structurally so nobody adds one later.
+assert('binding is reported inside the integrity finding and adds no third verdict',
+  Object.keys(results['binding-altered']).filter((k) => k === 'binding' || k === 'bindingVerdict').length === 0 &&
+  results['binding-altered'].integrity.counts.fail > 0);
+
+// 10. Black-and-white printing: every state this tool can emit must carry a
+//     glyph AND a word in the exported paper, or a photocopied working paper
+//     loses the distinction entirely.
+const papers = Object.values(results).filter((r) => r.loaded).map((r) => AC.workingPaper(r));
+assert('every check in every fixture prints a glyph and a word, never colour alone',
+  Object.values(results).filter((r) => r.loaded).every((r, i) =>
+    r.checks.every((c) => /^\[[+X!?\-–]\]$/.test(
+      { pass: '[+]', fail: '[X]', missing: '[!]', not_checked: '[?]' }[c.state] || '') &&
+      papers[i].includes({ pass: 'PASS', fail: 'FAIL', missing: 'CANNOT CHECK', not_checked: 'NOT CHECKED' }[c.state]))));
 
 console.log(`\n${failures === 0 ? 'all assertions passed' : failures + ' assertion(s) failed'}`);
 process.exit(failures === 0 ? 0 : 1);
