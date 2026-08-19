@@ -92,7 +92,16 @@ PY
   output="$("$PYTHON" -m pytest "$module" -q -rs -p no:warnings 2>&1)"
   status=$?
 
-  if echo "$output" | grep -q "^[0-9]* passed"; then
+  # A build or toolchain failure must NEVER be reported as BLOCKED. BLOCKED
+  # is a claim about the product — "the capability under attack does not
+  # exist yet" — and a broken compiler is not a fact about the product. Left
+  # merged, a tree that simply did not build would print a table full of
+  # calm-looking rows, which is precisely the dishonesty this harness exists
+  # to prevent. COULD NOT RUN is its own state and fails the run.
+  if echo "$output" | grep -qE "cargo build failed|error: could not compile|no such file or directory|not on PATH|could not connect|Connection refused"; then
+    verdict="COULD NOT RUN"
+    reason="$(echo "$output" | grep -iE "cargo build failed|could not compile|not on PATH|could not connect|Connection refused" | head -1 | cut -c1-160)"
+  elif echo "$output" | grep -q "^[0-9]* passed"; then
     verdict="STOPPED"
     reason=""
   elif echo "$output" | grep -qE "^SKIPPED|s +\[" || echo "$output" | grep -q "skipped"; then
@@ -122,14 +131,14 @@ for line in sorted(open(sys.argv[1]), key=lambda l: int(l.split("\t")[0]) if l.s
 
 num_w = max([len(r[0]) for r in rows] + [1])
 title_w = max([len(r[1]) for r in rows] + [len("ATTACK")])
-verdict_w = len("NOT STOPPED")
+verdict_w = len("COULD NOT RUN")
 
 sep = "  "
 header = f"{'#':>{num_w}}{sep}{'ATTACK':<{title_w}}{sep}{'RESULT':<{verdict_w}}"
 print(header)
 print("-" * len(header))
 
-counts = {"STOPPED": 0, "NOT STOPPED": 0, "BLOCKED": 0}
+counts = {"STOPPED": 0, "NOT STOPPED": 0, "BLOCKED": 0, "COULD NOT RUN": 0}
 for num, title, verdict, reason in rows:
     counts[verdict] = counts.get(verdict, 0) + 1
     print(f"{num:>{num_w}}{sep}{title:<{title_w}}{sep}{verdict:<{verdict_w}}")
@@ -139,13 +148,21 @@ for num, title, verdict, reason in rows:
             print(f"{indent}{wrapped}")
 
 print("-" * len(header))
-print(f"{counts.get('STOPPED', 0)} stopped   "
-      f"{counts.get('NOT STOPPED', 0)} not stopped   "
-      f"{counts.get('BLOCKED', 0)} blocked")
+summary = (f"{counts.get('STOPPED', 0)} stopped   "
+           f"{counts.get('NOT STOPPED', 0)} not stopped   "
+           f"{counts.get('BLOCKED', 0)} blocked")
+if counts.get("COULD NOT RUN", 0):
+    summary += f"   {counts['COULD NOT RUN']} could not run"
+print(summary)
 print()
 print("BLOCKED means the capability under attack does not exist yet, so the")
 print("attack cannot be run. It is not a pass. Each blocked row names what")
 print("would unblock it.")
+if counts.get("COULD NOT RUN", 0):
+    print()
+    print("COULD NOT RUN means the harness itself failed — the tree did not")
+    print("build, a tool was missing, or the database was unreachable. It says")
+    print("NOTHING about the product, and this run proves less than a clean one.")
 
-sys.exit(1 if counts.get("NOT STOPPED", 0) else 0)
+sys.exit(1 if (counts.get("NOT STOPPED", 0) or counts.get("COULD NOT RUN", 0)) else 0)
 PY

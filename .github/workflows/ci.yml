@@ -217,6 +217,37 @@ jobs:
           pytest tests/test_pdf_writer.py tests/test_evidence_exporter.py \
                  tests/test_aihoots_adapter.py -v
 
+      - name: Offline verification bundle
+        run: pytest tests/test_bundle.py -v
+
+      - name: Auditor console — the two verdicts must never merge
+        # The console's own verify.js, run under node against four fixtures.
+        # The assertion that earns its keep: a cryptographically clean proof
+        # that a client was NOT suitable must report a good integrity finding
+        # AND a declining outcome, separately. A single combined verdict would
+        # print a correct decline as an approval, in front of an auditor.
+        run: node clients/auditor-console/check_fixtures.mjs
+
+      - name: Break-it — adversarial suite against the real system
+        # Eleven attacks, no mocks in the attack path. Exits non-zero only on
+        # NOT STOPPED. A BLOCKED row is an honest report that the capability
+        # under attack does not exist yet, and does not fail the build — but
+        # the next step makes sure the blocked count cannot quietly grow.
+        run: ./scripts/break_it.sh | tee /tmp/break_it.txt
+
+      - name: Fail if the break-it suite got quieter
+        # The failure this guards against is a capability being removed, or a
+        # test being softened into a skip, so that an attack silently stops
+        # being attempted. Six attacks run today. If that number falls, the
+        # suite proved less than it did yesterday and someone must say why.
+        run: |
+          stopped=$(sed -n 's/^\([0-9]*\) stopped.*/\1/p' /tmp/break_it.txt)
+          if [ -z "$stopped" ] || [ "$stopped" -lt 6 ]; then
+            echo "::error::break-it reported ${stopped:-no} attacks stopped; expected at least 6"
+            cat /tmp/break_it.txt
+            exit 1
+          fi
+
       - name: Fail if any integration gate skipped instead of running
         # `pytest.skip` on a missing prerequisite is right for a laptop and
         # wrong for CI: a pipeline that goes green because the integration

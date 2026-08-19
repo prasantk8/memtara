@@ -164,6 +164,70 @@ pub async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthRe
             }),
         };
 
+    // ---------------------------------------------------------------
+    // The prover binary — executed, not inferred
+    //
+    // Every check above this line reads a file or a config value. None of
+    // them touches `bb`, which is the one dependency whose absence stops
+    // verification dead: `verify::ensure_vkeys` refuses to boot without it,
+    // and every submitted proof shells out to it.
+    //
+    // That gap was not theoretical. The adversarial suite removes `bb`
+    // mid-flight (tests/break_it/test_attack_06_proof_service_removed.py)
+    // and the system correctly fails closed on every request — while this
+    // endpoint went on reporting `ok`, because the vkey FILES were still on
+    // disk. A health check that stays green through the exact outage it
+    // exists to detect is worse than no health check: an operator watching
+    // it would have had no signal, and Mode B's fallback logic needs a real
+    // liveness answer rather than an inferred one.
+    //
+    // So this runs `bb --version` and reports what actually happened. It is
+    // one process spawn on a route that is polled, which is the cost of the
+    // answer being true.
+    // ---------------------------------------------------------------
+    let prover_check = match tokio::process::Command::new(&state.config.bb_bin)
+        .arg("--version")
+        .kill_on_drop(true)
+        .output()
+        .await
+    {
+        Ok(out) if out.status.success() => json!({
+            "ok": true,
+            "binary": state.config.bb_bin,
+            "version": String::from_utf8_lossy(&out.stdout).trim(),
+        }),
+        Ok(out) => {
+            degraded = true;
+            tracing::error!(
+                bb = %state.config.bb_bin,
+                code = ?out.status.code(),
+                "health: the prover binary is present but did not run — proof verification \
+                 will fail closed on every request"
+            );
+            json!({
+                "ok": false,
+                "binary": state.config.bb_bin,
+                "reason": "ran but exited non-zero",
+                "exit_code": out.status.code(),
+            })
+        }
+        Err(e) => {
+            degraded = true;
+            tracing::error!(
+                bb = %state.config.bb_bin,
+                error = %e,
+                "health: the prover binary could not be executed — proof verification will \
+                 fail closed on every request"
+            );
+            json!({
+                "ok": false,
+                "binary": state.config.bb_bin,
+                "reason": "could not be executed",
+                "error": e.to_string(),
+            })
+        }
+    };
+
     let status = if degraded { "degraded" } else { "ok" };
     let code = if degraded { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK };
 
@@ -177,6 +241,7 @@ pub async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthRe
                 "issuer_key": jwks_check,
                 "verification_keys": { "ok": !circuits.values().any(|c| c["present"] == json!(false)), "circuits": circuits },
                 "published_wealth_vkey": published_check,
+                "prover": prover_check,
             }),
         }),
     )
