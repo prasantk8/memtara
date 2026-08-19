@@ -6,6 +6,7 @@ mod db;
 mod disclosure;
 mod domain;
 mod error;
+mod evidence;
 mod issuance;
 mod ops;
 mod orgs;

@@ -1424,8 +1424,11 @@ def _section_5_seal(
 
     doc.heading("5e. How to re-verify all of this without the firm", level=2)
     doc.bullet(
-        "Step 1. Fetch the issuer's JWKS and check the token in section 2e with any JOSE "
-        "library. No call to Memtara is needed beyond the key set, and it is cacheable."
+        "Step 1. Check the token in section 2e against the issuer's published JWKS with any "
+        "JOSE library. Prefer the pinned snapshot in an offline verification bundle "
+        "(jwks_snapshot.json, see docs/VERIFY.md step 8) over a live fetch: a key set "
+        "retrieved today evidences today's DNS, not this issuance, and a live fetch stops "
+        "working the day the issuer or that key goes away."
     )
     doc.bullet(
         "Step 2. Take the proof bytes and the public inputs from the firm's records and run bb "
