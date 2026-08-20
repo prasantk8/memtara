@@ -28,6 +28,18 @@ pub enum ApiError {
     #[error("forbidden")]
     Forbidden,
 
+    /// A 403 that says *why*. `Forbidden` on its own is right when the
+    /// caller simply lacks the tenant relationship a route requires;
+    /// `issue_wealth_request`'s consent gate needs more, because "forbidden"
+    /// alone leaves an integrator unable to tell "you have never granted
+    /// consent for this" from "you granted it and then revoked it" from "you
+    /// granted consent, but not for this purpose" — three different fixes.
+    /// Same reasoning as `NotFoundDetail` beside it, and the same care about
+    /// what the detail may say: it names only facts the caller's own org
+    /// already has (a consent id or its absence), never another tenant's.
+    #[error("forbidden: {0}")]
+    ForbiddenDetail(String),
+
     #[error("bad request: {0}")]
     BadRequest(String),
 
@@ -68,6 +80,7 @@ impl IntoResponse for ApiError {
             ApiError::NotFoundDetail(_) => (StatusCode::NOT_FOUND, self.to_string()),
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, self.to_string()),
             ApiError::Forbidden => (StatusCode::FORBIDDEN, self.to_string()),
+            ApiError::ForbiddenDetail(_) => (StatusCode::FORBIDDEN, self.to_string()),
             ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),
             ApiError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, self.to_string()),

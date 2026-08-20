@@ -34,10 +34,10 @@ use crate::crypto::signer::proof_digest_hex;
 use crate::domain::CircuitType;
 use crate::error::{ApiError, ApiResult};
 use crate::evidence::{
-    derive_decision_basis, CompletedReview, CryptographicProof, DecisionAction, DecisionEvidence,
-    DecisionInputs, DecisionOutcome, DeclaredAttestation, DeclaredIdentity, EvidenceArtifact,
-    HumanReviewInputs, Institution, ModelCorrection, ModelProvenance, Provenanced,
-    RegulatoryControl, ReviewOverride,
+    derive_decision_basis, CompletedReview, Consent, CryptographicProof, DecisionAction,
+    DecisionEvidence, DecisionInputs, DecisionOutcome, DeclaredAttestation, DeclaredIdentity,
+    EvidenceArtifact, HumanReviewInputs, Institution, ModelCorrection, ModelProvenance,
+    Provenanced, RegulatoryControl, ReviewOverride,
 };
 use crate::orgs::OrgAuth;
 use crate::state::AppState;
@@ -244,6 +244,7 @@ struct EvidenceSources {
     assessed_at: Option<chrono::DateTime<chrono::Utc>>,
     org: Institution,
     subject_id: String,
+    consent: Consent,
     vault_root: Provenanced<String>,
     threshold_set_id: Provenanced<String>,
     threshold_version: Provenanced<String>,
@@ -294,6 +295,7 @@ async fn gather(
         select w.product_id, w.product_isin, w.min_income, w.min_liquidity,
                w.max_concentration_percent, w.product_risk_level,
                w.suitable, w.assessed_at, w.created_at, w.terms_version, w.vault_root,
+               w.consent_grant_id,
                d.user_id, d.org_id, o.name as org_name, o.org_type
         from wealth_requests w
         join disclosure_requests d on d.id = w.request_id
@@ -317,6 +319,96 @@ async fn gather(
         DecisionOutcome::Affirmative
     } else {
         DecisionOutcome::Negative
+    };
+
+    // ---------------------------------------------------------------
+    // CONSENT. `wealth_requests.consent_grant_id` is snapshotted once, at
+    // open, by `issue_wealth_request`'s enforcement check — see
+    // `consents::require_covering_grant`. It is read here and joined LIVE
+    // rather than re-resolved, and that distinction matters: re-running the
+    // enforcement query today would answer "which grant covers this user
+    // NOW", and a grant revoked an hour after this decision opened would
+    // make an untouched, already-decided assessment's evidence go blank.
+    // The five leaves below answer what this decision was actually opened
+    // under — see docs/STAGE_PLAN_CONSENT_AND_WITNESS.md §A3 and the
+    // consent block's own $comment in schema/decision_evidence/v1.3.0.json.
+    const NO_GRANT: &str =
+        "this assessment carries no consent_grant_id: it was opened before \
+         migrations/0011_consent_grants.sql existed, when nothing in the backend enforced or \
+         recorded a consent grant, so there was never a binding event to replay";
+    let consent = match req.consent_grant_id {
+        Some(consent_id) => {
+            let grant = sqlx::query!(
+                r#"
+                select scope, consent_version, purpose_hash, granted_at
+                from consent_grants
+                where id = $1
+                "#,
+                consent_id,
+            )
+            .fetch_optional(db)
+            .await?;
+
+            match grant {
+                Some(g) => {
+                    let scope: Vec<String> = serde_json::from_value(g.scope).map_err(|e| {
+                        ApiError::Other(anyhow::anyhow!(
+                            "consent_grants.scope for {consent_id} is not an array of strings \
+                             ({e}), which consent_scope_is_array_of_nonempty_strings forbids; \
+                             the row was written around the schema"
+                        ))
+                    })?;
+                    Consent {
+                        consent_id: Provenanced::recorded(consent_id.to_string()),
+                        consent_version: Provenanced::recorded(g.consent_version),
+                        scope: Provenanced::recorded(scope),
+                        granted_at: Provenanced::recorded(g.granted_at),
+                        purpose_hash: match g.purpose_hash {
+                            Some(h) => Provenanced::recorded(h),
+                            None => Provenanced::not_applicable(
+                                "the capturing system did not supply a purpose_hash when this \
+                                 grant was made (consent_grants.purpose_hash is optional — see \
+                                 migrations/0011); this grant's scope is what actually covers \
+                                 this decision's purpose",
+                            ),
+                        },
+                    }
+                }
+                // The grant this decision cites has been deleted. Every leaf
+                // is unpopulated rather than the block being silently
+                // dropped — a required key with a stated reason, exactly the
+                // shape `model_intake::absent_attestation` uses for the
+                // analogous gap on the model side. The DELETE itself is what
+                // `test_attack_08_consent_revocation.py` step 4 exercises,
+                // and it is independently visible in a replay report as
+                // `source_row_missing` on this grant's binding events.
+                None => {
+                    let reason = format!(
+                        "the consent grant this decision cites ({consent_id}) no longer exists \
+                         in consent_grants. wealth_requests.consent_grant_id still names it — \
+                         migrations/0013_consent_grant_id_outlives_the_grant.sql removed the \
+                         foreign key precisely so this id would survive its row's deletion — so \
+                         replaying this decision's binding_integrity still finds and reports the \
+                         grant's own consent_grant_bound/consent_revocation_bound events as \
+                         source_row_missing rather than silently dropping them from scope"
+                    );
+                    Consent {
+                        consent_id: Provenanced::unpopulated(reason.clone()),
+                        consent_version: Provenanced::unpopulated(reason.clone()),
+                        scope: Provenanced::unpopulated(reason.clone()),
+                        granted_at: Provenanced::unpopulated(reason.clone()),
+                        purpose_hash: Provenanced::unpopulated(reason),
+                    }
+                }
+            }
+        }
+        None => Consent {
+            consent_id: Provenanced::unpopulated(NO_GRANT),
+            consent_version: Provenanced::unpopulated(NO_GRANT),
+            scope: Provenanced::unpopulated(NO_GRANT),
+            granted_at: Provenanced::unpopulated(NO_GRANT),
+            purpose_hash: Provenanced::unpopulated(NO_GRANT),
+        },
     };
 
     // ---------------------------------------------------------------
@@ -700,6 +792,7 @@ async fn gather(
             org_type: req.org_type,
         },
         subject_id: req.user_id.to_string(),
+        consent,
         vault_root: match req.vault_root {
             Some(root) => Provenanced::recorded(format!("0x{}", hex(&root))),
             None => Provenanced::unpopulated(
@@ -789,6 +882,7 @@ pub(super) async fn build_decision_evidence(
         assessed_at: s.assessed_at,
         exported_at: Utc::now(),
         subject_id: s.subject_id,
+        consent: s.consent,
         // Empty by design rather than by omission: the server never had the
         // client's income, liquidity, risk tolerance or holdings.
         disclosed_attributes: vec![],
@@ -921,6 +1015,33 @@ pub(super) async fn get_decision_evidence(
             .iter()
             .map(|c| c.correction_id),
     );
+    // The consent grant this decision was opened under, if it has one —
+    // `consent_grant_bound` and any `consent_revocation_bound` are keyed on
+    // the GRANT's own id (audit/binding.rs), not on `request_id`, for the
+    // same structural reason a correction's binding is: the rebuild has to
+    // be a pure function of one row, and that row is `consent_grants`, not
+    // this decision.
+    //
+    // Read from `wealth_requests` directly rather than parsed back out of
+    // the served record — deliberately NOT the correction pattern above,
+    // which reuses ids the record already carries. The consent block
+    // degrades to `unpopulated` (with `value: null`) the moment the grant
+    // row is deleted, by design (`Consent`'s "grant was deleted" branch
+    // above), so parsing the id out of the served string would lose it at
+    // exactly the moment attack 8 step 4 needs it kept: replaying a grant's
+    // binding events AFTER its row is gone is the entire point of a binding
+    // event outliving its source row. `wealth_requests.consent_grant_id`
+    // survives that deletion on purpose — see
+    // migrations/0013_consent_grant_id_outlives_the_grant.sql — which is
+    // what makes it, and not the record, the right place to read this from.
+    let consent_grant_id: Option<Uuid> = sqlx::query_scalar!(
+        "select consent_grant_id from wealth_requests where request_id = $1",
+        request_id,
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+    refs.extend(consent_grant_id);
 
     let mut conn = state.db.acquire().await?;
     response.binding_integrity =

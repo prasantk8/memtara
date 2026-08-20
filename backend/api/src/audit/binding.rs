@@ -129,6 +129,19 @@ pub const EVENT_DISCLOSURE_POLICY_BOUND: &str = "disclosure_policy_bound";
 pub const EVENT_MODEL_ATTESTATION_CORRECTION_BOUND: &str =
     "decision_model_attestation_correction_bound";
 
+/// The `consent_grants` row as it stood when a grant was recorded, bound to
+/// the chain in the same transaction as the grant.
+///
+/// See the `consent_grants` section below for why this and
+/// `EVENT_CONSENT_REVOCATION_BOUND` rebuild from the SAME function against
+/// the SAME row, unlike `EVENT_MODEL_ATTESTATION_BOUND` and its correction
+/// sibling, which bind two different tables.
+pub const EVENT_CONSENT_GRANT_BOUND: &str = "consent_grant_bound";
+
+/// The `consent_grants` row as it stood the moment a grant was revoked,
+/// bound to the chain in the same transaction as the revocation.
+pub const EVENT_CONSENT_REVOCATION_BOUND: &str = "consent_revocation_bound";
+
 /// Versioned because the payload shape is now consensus-critical: change a
 /// key name and every event written before the change stops replaying. A
 /// future shape gets a new version and `replay.rs` keeps both, rather than
@@ -137,6 +150,7 @@ const MODEL_ATTESTATION_BINDING_V1: &str = "decision_model_attestation_binding/v
 const DISCLOSURE_POLICY_BINDING_V1: &str = "disclosure_policy_binding/v1";
 const MODEL_ATTESTATION_CORRECTION_BINDING_V1: &str =
     "decision_model_attestation_correction_binding/v1";
+const CONSENT_GRANT_BINDING_V1: &str = "consent_grant_binding/v1";
 
 /// Every binding event type this module knows how to build and rebuild.
 /// `replay.rs` uses it to decide which `audit_log` rows it is able to check
@@ -145,6 +159,8 @@ pub const BINDING_EVENT_TYPES: &[&str] = &[
     EVENT_MODEL_ATTESTATION_BOUND,
     EVENT_DISCLOSURE_POLICY_BOUND,
     EVENT_MODEL_ATTESTATION_CORRECTION_BOUND,
+    EVENT_CONSENT_GRANT_BOUND,
+    EVENT_CONSENT_REVOCATION_BOUND,
 ];
 
 /// Refuse a payload that has no canonical form at all.
@@ -206,13 +222,34 @@ fn guard_cross_verifier_reproducible(event_type: &str, payload: &Value) -> ApiRe
 /// produces a digest only one of the two verifiers can reproduce. Fixed-point
 /// amounts belong in minor units as integers.
 pub fn check_policy_is_bindable(policy: &Value) -> ApiResult<()> {
-    canonical_bytes(policy).map(|_| ()).map_err(|e| {
+    check_bindable("this policy", policy)
+}
+
+/// The same refusal `check_policy_is_bindable` makes, for the other
+/// caller-controlled JSON value that reaches a binding payload: a consent
+/// grant's `scope` (`consents::CreateConsentBody::scope`). Structural shape —
+/// non-empty, every element a non-empty string — is `consents`' own job and
+/// is checked before this runs; this is the narrower, unfixable half: a
+/// float has no rendering Python's `json.dumps` and Rust's `ryu` agree on,
+/// and a scope array cannot smuggle one in past the structural check alone
+/// (`[1.5]` is a well-formed JSON array whose only element is not a string,
+/// which the structural check already refuses — this exists as the second
+/// layer for the same reason `decision_model_attestation_corrections`'
+/// CHECK constraints exist beside `model_correction.rs`'s parser: a rule
+/// that only lives in a handler is a rule someone holding a different call
+/// site can route around).
+pub fn check_scope_is_bindable(scope: &Value) -> ApiResult<()> {
+    check_bindable("this consent scope", scope)
+}
+
+fn check_bindable(what: &str, value: &Value) -> ApiResult<()> {
+    canonical_bytes(value).map(|_| ()).map_err(|e| {
         ApiError::BadRequest(format!(
-            "this policy cannot be recorded as evidence: {e}. The policy is committed to the \
-             audit chain in a canonical form that an offline verifier reproduces independently \
-             (see docs/VERIFY.md), and a value that only one implementation can render would \
-             produce a commitment nobody else could check. Rather than store a policy whose \
-             binding we could not honour, the request is refused here"
+            "{what} cannot be recorded as evidence: {e}. It is committed to the audit chain in \
+             a canonical form that an offline verifier reproduces independently (see \
+             docs/VERIFY.md), and a value that only one implementation can render would produce \
+             a commitment nobody else could check. Rather than store a value whose binding we \
+             could not honour, the request is refused here"
         ))
     })
 }
@@ -538,6 +575,136 @@ pub async fn record_policy_binding(
     Ok(())
 }
 
+// =====================================================================
+// consent_grants
+// =====================================================================
+//
+// -------------------------------------------------------------------
+// WHY ONE PAYLOAD FUNCTION SERVES TWO EVENT TYPES
+// -------------------------------------------------------------------
+// Every other binding in this module keys a distinct event type to a
+// distinct TABLE — `decision_model_attestations` versus its own
+// `..._corrections` sibling — precisely so that filing a correction never
+// changes the bytes the ORIGINAL attestation's binding rebuilds (0009's
+// whole argument for a second table instead of an UPDATE). Consent
+// revocation does not get that luxury: migrations/0011 makes revocation an
+// UPDATE to the SAME row, deliberately — a revoked grant is still the same
+// grant, contradicted rather than replaced, and the record of what was
+// revoked belongs beside the record of what was granted, not in a table of
+// its own.
+//
+// So `EVENT_CONSENT_GRANT_BOUND` and `EVENT_CONSENT_REVOCATION_BOUND` both
+// rebuild from `consent_grant_payload`, which reads the row AS IT STANDS
+// NOW, whichever event is asking. The consequence is worth being explicit
+// about, because it looks like a false positive until traced through: once
+// a grant is legitimately revoked, replaying the ORIGINAL
+// `consent_grant_bound` event recomputes against a row whose
+// `revoked_at`/`revocation_reason` are no longer null, so it reports
+// ALTERED — not because anyone attacked it, but because the row it commits
+// to has, correctly, moved on. That is not a defect in this design; it is
+// what "every key always present, so revocation changes bytes rather than
+// adding keys" (see the header rule this shares with
+// `model_attestation_payload`) actually cashes out to for a table that is
+// updated in place. The event that answers "is this grant's CURRENT state
+// what the chain committed to" after a revocation is
+// `consent_revocation_bound`, whose own recorded hash was computed against
+// the post-revocation row and therefore stays INTACT until something
+// changes it again — which is exactly the tamper
+// `test_attack_08_consent_revocation.py` step 3 demonstrates.
+pub async fn consent_grant_payload(
+    conn: &mut PgConnection,
+    consent_id: Uuid,
+) -> ApiResult<Option<Value>> {
+    let row = sqlx::query!(
+        r#"
+        select id, user_id, scope, consent_version, purpose_hash, granted_at, granted_via,
+               revoked_at, revocation_reason
+        from consent_grants
+        where id = $1
+        "#,
+        consent_id,
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    let payload = json!({
+        "binding": CONSENT_GRANT_BINDING_V1,
+        "consent_id": row.id,
+        "user_id": row.user_id,
+        // `scope` is jsonb; Postgres already normalised it on write (no
+        // duplicate keys, no insignificant whitespace — there are none to
+        // have, since a jsonb array carries neither), so these bytes are a
+        // function of the array's CONTENT, not of how the caller formatted
+        // the request.
+        "scope": row.scope,
+        "consent_version": row.consent_version,
+        "purpose_hash": opt_str(row.purpose_hash),
+        "granted_at": json!(row.granted_at),
+        "granted_via": row.granted_via,
+        // Explicit nulls until revoked, present in every payload this
+        // function ever returns — the rejection-symmetry rule this module's
+        // header argues for, and the reason revocation changes bytes rather
+        // than adding a key that was previously absent.
+        "revoked_at": opt_time(row.revoked_at),
+        "revocation_reason": opt_str(row.revocation_reason),
+    });
+
+    guard_cross_verifier_reproducible(EVENT_CONSENT_GRANT_BOUND, &payload)?;
+    Ok(Some(payload))
+}
+
+/// Write the grant binding event. Called inside the caller's transaction —
+/// `consents::grant_consent` — so a grant cannot exist unbound: either the
+/// row and the event that commits to it both land, or neither does.
+pub async fn record_consent_grant_binding(
+    tx: &mut sqlx::PgTransaction<'_>,
+    org_id: Uuid,
+    consent_id: Uuid,
+) -> ApiResult<()> {
+    let payload = consent_grant_payload(&mut **tx, consent_id).await?.ok_or_else(|| {
+        ApiError::Other(anyhow::anyhow!(
+            "{EVENT_CONSENT_GRANT_BOUND}: no consent_grants row for {consent_id} at binding \
+             time. The binding event must be written in the same transaction as the row it \
+             binds; a missing row here means that ordering was broken and a grant would \
+             otherwise be recorded with its contents committed to nothing"
+        ))
+    })?;
+    super::record_binding_in_conn(&mut **tx, org_id, EVENT_CONSENT_GRANT_BOUND, consent_id, payload)
+        .await?;
+    Ok(())
+}
+
+/// Write the revocation binding event. Called inside `consents::revoke_consent`'s
+/// transaction, AFTER the `UPDATE ... SET revoked_at = ...` — the payload it
+/// builds is `consent_grant_payload` re-read post-update, so it commits to
+/// the row as revocation left it.
+pub async fn record_consent_revocation_binding(
+    tx: &mut sqlx::PgTransaction<'_>,
+    org_id: Uuid,
+    consent_id: Uuid,
+) -> ApiResult<()> {
+    let payload = consent_grant_payload(&mut **tx, consent_id).await?.ok_or_else(|| {
+        ApiError::Other(anyhow::anyhow!(
+            "{EVENT_CONSENT_REVOCATION_BOUND}: no consent_grants row for {consent_id} at \
+             binding time. The binding event must be written in the same transaction as the \
+             UPDATE it binds; a missing row here means that ordering was broken"
+        ))
+    })?;
+    super::record_binding_in_conn(
+        &mut **tx,
+        org_id,
+        EVENT_CONSENT_REVOCATION_BOUND,
+        consent_id,
+        payload,
+    )
+    .await?;
+    Ok(())
+}
+
 /// Rebuild the payload for whichever binding event type this is.
 ///
 /// `replay.rs`'s single entry point into this module. Returning `Ok(None)`
@@ -556,6 +723,12 @@ pub async fn rebuild_payload(
         // note on `model_attestation_correction_payload`.
         EVENT_MODEL_ATTESTATION_CORRECTION_BOUND => {
             model_attestation_correction_payload(conn, ref_id).await
+        }
+        // Both consent event types rebuild from the same function against
+        // the same row — see the section header above for why that is not
+        // a shortcut but the actual shape of a table revoked in place.
+        EVENT_CONSENT_GRANT_BOUND | EVENT_CONSENT_REVOCATION_BOUND => {
+            consent_grant_payload(conn, ref_id).await
         }
         other => Err(ApiError::Other(anyhow::anyhow!(
             "{other} is not a binding event type; replay cannot rebuild it"
@@ -709,7 +882,9 @@ mod tests {
             assert!(
                 *t == EVENT_MODEL_ATTESTATION_BOUND
                     || *t == EVENT_DISCLOSURE_POLICY_BOUND
-                    || *t == EVENT_MODEL_ATTESTATION_CORRECTION_BOUND,
+                    || *t == EVENT_MODEL_ATTESTATION_CORRECTION_BOUND
+                    || *t == EVENT_CONSENT_GRANT_BOUND
+                    || *t == EVENT_CONSENT_REVOCATION_BOUND,
                 "{t} is advertised as replayable but rebuild_payload does not handle it"
             );
         }
@@ -773,5 +948,89 @@ mod tests {
         // one — otherwise the key-set comparison above would pass against a
         // pair of identical objects.
         assert_ne!(named, unnameable);
+    }
+
+    /// A grant's payload and the same row's payload post-revocation carry
+    /// the same key set — `revoked_at`/`revocation_reason` are present and
+    /// null before revocation, present and populated after, never absent
+    /// either way. Written against literals for the same reason
+    /// `both_declarations_bind_the_same_key_set` is: this proves the SHAPE
+    /// is symmetric, not that one particular row happens to be.
+    #[test]
+    fn a_grant_and_its_revocation_bind_the_same_key_set() {
+        let keys = |v: &Value| -> Vec<String> { v.as_object().unwrap().keys().cloned().collect() };
+        let entry = |revoked_at: Value, revocation_reason: Value| {
+            json!({
+                "binding": CONSENT_GRANT_BINDING_V1,
+                "consent_id": Uuid::nil(),
+                "user_id": Uuid::nil(),
+                "scope": ["wealth.suitability_recommendation"],
+                "consent_version": "v1",
+                "purpose_hash": Value::Null,
+                "granted_at": json!(Utc::now()),
+                "granted_via": "mobile_app",
+                "revoked_at": revoked_at,
+                "revocation_reason": revocation_reason,
+            })
+        };
+
+        let granted = entry(Value::Null, Value::Null);
+        let revoked = entry(
+            json!(Utc::now()),
+            json!("the customer withdrew consent via the mobile app settings screen"),
+        );
+        assert_eq!(keys(&granted), keys(&revoked));
+        assert_ne!(
+            granted, revoked,
+            "revocation must change the bytes — that is the whole mechanism, not a defect in it"
+        );
+
+        assert!(guard_cross_verifier_reproducible("test", &granted).is_ok());
+        assert!(guard_cross_verifier_reproducible("test", &revoked).is_ok());
+    }
+
+    /// The trap this module's header warns about, re-checked for the field
+    /// this stage adds: `revocation_reason` and a consent grant's `scope`
+    /// strings are exactly the free text a French- or Arabic-language desk
+    /// will actually type, and the first version of this guard 500'd on
+    /// every one of them.
+    #[test]
+    fn a_consent_grant_with_non_english_free_text_is_bindable() {
+        let payload = json!({
+            "binding": CONSENT_GRANT_BINDING_V1,
+            "consent_id": Uuid::nil(),
+            "user_id": Uuid::nil(),
+            "scope": ["البيانات المالية للتقييم"],
+            "consent_version": "v1",
+            "purpose_hash": Value::Null,
+            "granted_at": json!(Utc::now()),
+            "granted_via": "assisted_kiosk",
+            "revoked_at": json!(Utc::now()),
+            "revocation_reason": "le client a retiré son consentement lors du rendez-vous en agence",
+        });
+        assert!(
+            guard_cross_verifier_reproducible("test", &payload).is_ok(),
+            "a scope or a revocation reason written in French or Arabic must be recordable"
+        );
+        assert_ne!(
+            canonical_bytes(&payload).unwrap(),
+            serde_json::to_vec(&payload).unwrap(),
+            "if these ever agree on non-ASCII, the encoding split in audit::PayloadEncoding is \
+             no longer load-bearing and this test is no longer evidence of anything"
+        );
+    }
+
+    /// `check_scope_is_bindable` is the caller-facing half of the same rule,
+    /// for the one place arbitrary caller JSON reaches a consent binding
+    /// payload before a row exists to fail on.
+    #[test]
+    fn an_unbindable_scope_is_a_client_error_not_a_server_error() {
+        assert!(check_scope_is_bindable(&json!(["wealth.suitability_recommendation"])).is_ok());
+        match check_scope_is_bindable(&json!([1.5])) {
+            Err(ApiError::BadRequest(msg)) => {
+                assert!(msg.contains("cannot be recorded as evidence"), "{msg}");
+            }
+            other => panic!("a float in a scope array must be a 400, got {other:?}"),
+        }
     }
 }

@@ -107,6 +107,13 @@ DEFAULT_TERMS = dict(
     product_risk_level=3,
 )
 
+# Must match `wealth::BUSINESS_PROCESS` (backend/api/src/wealth/mod.rs) —
+# the scope string `require_covering_grant` checks a consent grant's `scope`
+# array for. Duplicated here rather than read from the running server for
+# the same reason every other constant in this file is a literal: this
+# suite exercises the HTTP surface, not the Rust source tree.
+WEALTH_BUSINESS_PROCESS = "wealth.suitability_recommendation"
+
 
 @dataclasses.dataclass
 class Desk:
@@ -152,6 +159,7 @@ def make_desk(request):
         existing_holdings_value: int = 200_000,
         seed: int = 0x5EA_51DE_C0DE,
         approved: bool = True,
+        grant_consent: bool = True,
     ) -> Desk:
         toolchain_or_skip()
         terms = dict(terms or DEFAULT_TERMS)
@@ -218,6 +226,39 @@ def make_desk(request):
             timeout=10.0,
         )
         assert put.status_code == 200, put.text
+
+        # A live, unrevoked consent grant covering the wealth flow's
+        # business process. Added here for the same reason product
+        # registration is: `issue_wealth_request` (backend/api/src/
+        # wealth/mod.rs) has refused every assessment with no covering
+        # grant since migrations/0011_consent_grants.sql landed, so every
+        # attack that opens one — which is most of this suite — needs a
+        # desk that already has consent, the same way it already needs a
+        # registered, approved product. `WEALTH_BUSINESS_PROCESS` must
+        # match `wealth::BUSINESS_PROCESS` in the Rust source.
+        #
+        # `grant_consent=False` opts a desk out of this default entirely —
+        # for `test_attack_08_consent_revocation.py`, the one test whose
+        # whole point is to control a desk's consent lifecycle itself
+        # (grant, then revoke, then attempt again). A desk carrying BOTH
+        # this default grant and attack 8's own would still pass
+        # `require_covering_grant` after attack 8 revoked only its own,
+        # which would make the attack's central 403 assertion false —
+        # not because revocation failed, but because a second, unrelated
+        # grant this fixture manufactured happened to cover the same scope.
+        if grant_consent:
+            consent = httpx.post(
+                f"{base_url}/api/v1/consents",
+                json={
+                    "user_id": str(user_id),
+                    "scope": [WEALTH_BUSINESS_PROCESS],
+                    "consent_version": "break-it-suite-default-v1",
+                    "granted_via": "assisted_kiosk",
+                },
+                headers={"Authorization": f"Bearer {org_body['api_key']}"},
+                timeout=10.0,
+            )
+            assert consent.status_code == 201, consent.text
 
         desk = Desk(
             org_id=org_body["id"],

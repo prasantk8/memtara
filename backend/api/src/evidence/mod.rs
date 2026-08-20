@@ -1,7 +1,7 @@
 // DecisionEvidence — the record a regulator reads when nobody from Memtara
 // is in the room.
 //
-// INTEGRATED as of schema 1.1.0, at 1.2.0 as of this build.
+// INTEGRATED as of schema 1.1.0, at 1.3.0 as of this build.
 // `wealth/evidence.rs::build_decision_evidence` is the single construction
 // site; `GET /api/v1/wealth-assessments/:id/decision-evidence` serves it and
 // `POST .../review` returns it. The note that used to stand here — "nothing in
@@ -11,6 +11,11 @@
 // 1.2.0 added `model_provenance`, which is where the model block stopped
 // being a single un-rechecked forward declaration. Read that type's header
 // before changing anything about `model`.
+//
+// 1.3.0 gave `data.consent` a real source (`consents::` /
+// migrations/0011_consent_grants.sql) and renamed `DecisionBasis::
+// ProofAndHumanApproved` to `ProofAndHumanConcurred` — see the constant's
+// header below for both.
 //
 // -------------------------------------------------------------------
 // WHY THE ALLOW IS STILL HERE, HONESTLY
@@ -51,7 +56,7 @@ pub use provenance::{FieldState, Provenanced};
 
 /// The version of *this* schema. It is written into every record, inside the
 /// signed payload (see `DecisionEvidence::evidence_schema_version`), and it
-/// is the key an examiner uses to find `schema/decision_evidence/v1.2.0.json`
+/// is the key an examiner uses to find `schema/decision_evidence/v1.3.0.json`
 /// in the repo at the matching tag.
 ///
 /// Bumping this is not a code change on its own. A new value requires a new
@@ -137,7 +142,50 @@ pub use provenance::{FieldState, Provenanced};
 /// file rather than an edit for the same reason 1.1.0 was: v1.1.0.json sets
 /// `additionalProperties: false` at the top level, so a 1.2.0 record is not a
 /// valid 1.1.0 record and must not claim to be one.
-pub const EVIDENCE_SCHEMA_VERSION: &str = "1.2.0";
+///
+/// -------------------------------------------------------------------
+/// 1.2.0 -> 1.3.0: WHY
+/// -------------------------------------------------------------------
+/// Two changes, bumped together because the first is what forced the bump
+/// and the second was queued waiting for one: populating `data.consent`
+/// with real provenance, and renaming `DecisionBasis::ProofAndHumanApproved`
+/// to `ProofAndHumanConcurred`.
+///
+/// THE CONSENT LEAVES. `Consent`'s five fields — `consent_id`,
+/// `consent_version`, `scope`, `granted_at`, `purpose_hash` — have carried
+/// the same doc comment since schema 1.0.0: every one of them
+/// `Provenanced::unpopulated`, because nothing in this repository could
+/// source them. `migrations/0011_consent_grants.sql` and `consents::` are
+/// that source. Populating a field the pinned shape has always had is not,
+/// on its own, a reason to bump — the JSON Schema at every prior version
+/// already allowed `state: "recorded"` here, so a 1.2.0 reader that ignores
+/// `$comment`s reads a genuinely-populated 1.3.0 consent block exactly as
+/// it would read the unpopulated one, key for key. The bump is forced by
+/// the second change below, which touches the wire values of an existing
+/// field and could not ship as a patch.
+///
+/// THE RENAME. `ProofAndHumanApproved` never described what this system
+/// checks: `derive_decision_basis` reaches that variant whenever a human
+/// reviewed a decision without overriding it, which includes a reviewer who
+/// rubber-stamped without reading a word — `human_review.review_duration_ms`
+/// is the field that can tell the difference, not this one. "Approved"
+/// borrows the weight of a judgement the basis alone does not evidence.
+/// "Concurred" says only what is true unconditionally: a human looked at the
+/// same verdict the proof produced and did not go against it. The serialised
+/// value moves with it, `proof_and_human_approved` -> `proof_and_human_
+/// concurred`, which is exactly the kind of change `additionalProperties:
+/// false` + a `const` on `evidence_schema_version` exists to make a breaking
+/// one rather than a silent one: a 1.2.0-era reader matching on the old
+/// string would now find nothing to match, which is the correct failure —
+/// loud — rather than a reader quietly treating every future record as
+/// unapproved.
+///
+/// Minor, not major, for the same test 1.1.0 and 1.2.0 both passed: no
+/// record sealed under 1.2.0 or earlier can be re-interpreted as 1.3.0 —
+/// each version file is immutable and a reader must already select the file
+/// named by `evidence_schema_version` — so nothing already sealed changes
+/// meaning or bytes. What changes is only what a NEW record may say.
+pub const EVIDENCE_SCHEMA_VERSION: &str = "1.3.0";
 
 // =====================================================================
 // The record
@@ -305,8 +353,8 @@ pub enum DecisionOutcome {
 pub enum DecisionBasis {
     /// The cryptographic verdict, with no human in the loop.
     ProofOnly,
-    /// A proof was verified and a human separately approved.
-    ProofAndHumanApproved,
+    /// A proof was verified and a human separately concurred with it.
+    ProofAndHumanConcurred,
     /// A human overrode the cryptographic verdict. The most important
     /// variant in the set and the one a supervisor will grep for.
     ProofAndHumanOverride,
@@ -1031,6 +1079,13 @@ pub struct DecisionInputs {
     pub human_review: HumanReviewInputs,
     pub evidence_artifacts: Vec<EvidenceArtifact>,
     pub cryptographic_proofs: Vec<CryptographicProof>,
+    /// The grant this decision was authorised under — real provenance since
+    /// schema 1.3.0 (`consents::`, migrations/0011), where every earlier
+    /// version could only ever build this as `unpopulated`. Required, like
+    /// `model_provenance`: a caller that has not thought about which grant
+    /// covered this decision must not be able to produce a record that
+    /// silently claims there was none to think about.
+    pub consent: Consent,
 
     // -----------------------------------------------------------------
     // Fields that were hardcoded to `unpopulated` in the v1.0.0 builder
@@ -1163,8 +1218,8 @@ const NO_DURATION: &str = "the reviewing client did not report how long the revi
 /// carries. Kept as one constant so a reader grepping a sealed record finds
 /// every gap at once, and so no caller can invent a softer phrasing.
 const NO_SOURCE: &str =
-    "no source exists in memtara-api as of evidence schema 1.2.0; see \
-     schema/decision_evidence/v1.2.0.json for what would populate it";
+    "no source exists in memtara-api as of evidence schema 1.3.0; see \
+     schema/decision_evidence/v1.3.0.json for what would populate it";
 
 impl DecisionEvidence {
     /// Build a record, filling every field the codebase cannot yet source
@@ -1217,13 +1272,7 @@ impl DecisionEvidence {
                     },
                     data_provenance_version: Provenanced::unpopulated(NO_SOURCE),
                 },
-                consent: Consent {
-                    consent_id: Provenanced::unpopulated(NO_SOURCE),
-                    consent_version: Provenanced::unpopulated(NO_SOURCE),
-                    scope: Provenanced::unpopulated(NO_SOURCE),
-                    granted_at: Provenanced::unpopulated(NO_SOURCE),
-                    purpose_hash: Provenanced::unpopulated(NO_SOURCE),
-                },
+                consent: input.consent,
                 data_schema_version: Provenanced::unpopulated(NO_SOURCE),
             },
             model: input.model,
@@ -1296,7 +1345,7 @@ impl DecisionEvidence {
 pub fn derive_decision_basis(review: &HumanReviewInputs) -> DecisionBasis {
     match (review.performed, review.overridden) {
         (false, _) => DecisionBasis::ProofOnly,
-        (true, false) => DecisionBasis::ProofAndHumanApproved,
+        (true, false) => DecisionBasis::ProofAndHumanConcurred,
         (true, true) => DecisionBasis::ProofAndHumanOverride,
     }
 }
@@ -1451,6 +1500,13 @@ mod tests {
             model,
             model_provenance,
             human_review: review,
+            consent: Consent {
+                consent_id: Provenanced::unpopulated(NO_SOURCE),
+                consent_version: Provenanced::unpopulated(NO_SOURCE),
+                scope: Provenanced::unpopulated(NO_SOURCE),
+                granted_at: Provenanced::unpopulated(NO_SOURCE),
+                purpose_hash: Provenanced::unpopulated(NO_SOURCE),
+            },
             business_process: Provenanced::unpopulated(NO_SOURCE),
             decision_basis: Provenanced::unpopulated(NO_SOURCE),
             input_context_fingerprint: Provenanced::unpopulated(NO_SOURCE),
@@ -1628,7 +1684,7 @@ mod tests {
         );
 
         // Present in the bytes the digest is taken over.
-        assert!(text.contains(r#""evidence_schema_version":"1.2.0""#));
+        assert!(text.contains(r#""evidence_schema_version":"1.3.0""#));
 
         // The pinned file for this version exists. A record naming a schema
         // nobody can open is a record an examiner cannot check, and the
@@ -1787,31 +1843,34 @@ mod tests {
     /// changes — a fixture that only Rust agrees with proves nothing about
     /// what an offline verifier will compute.
     ///
-    /// Re-run for the 1.1.0 -> 1.2.0 rewrite of this literal, which added
-    /// `model_provenance` and moved every `NO_SOURCE` string to name the new
-    /// version. Two checks, both against these exact bytes: the exporter's
-    /// own `canonical_bytes` reproduces them, and `jsonschema` validates the
-    /// parsed object against the pinned `schema/decision_evidence/v1.2.0.json`
-    /// with zero errors — and against `v1.1.0.json` with errors, which is the
+    /// Re-run for the 1.2.0 -> 1.3.0 rewrite of this literal, which gave
+    /// `data.consent` a real source in `wealth/evidence.rs` (this fixture is
+    /// built directly, not through that path, so it still shows the
+    /// unpopulated shape a pre-migrations/0011 decision continues to serve)
+    /// and moved every `NO_SOURCE` string to name the new version. Two
+    /// checks, both against these exact bytes: the exporter's own
+    /// `canonical_bytes` reproduces them, and `jsonschema` validates the
+    /// parsed object against the pinned `schema/decision_evidence/v1.3.0.json`
+    /// with zero errors — and against `v1.2.0.json` with errors, which is the
     /// expected result and the reason the bump is a new file rather than an
     /// edit.
     #[test]
     fn canonical_bytes_of_the_fixed_fixture_do_not_drift() {
         const EXPECTED: &str = concat!(
-            r#"{"data":{"consent":{"consent_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
-            r#""consent_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
-            r#""granted_at":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
-            r#""purpose_hash":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
-            r#""scope":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null}},"#,
-            r#""customer":{"data_provenance":{"disclosed_attributes":[],"statement":"Memtara holds no income, liquidity, risk-tolerance or holdings figure for this subject.","vault_root":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null}},"#,
-            r#""data_provenance_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
-            r#""subject_id":"user_9f2a"},"data_schema_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null}},"#,
-            r#""decision":{"business_process":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
-            r#""decision_id":"71386234-daae-4896-91fe-4c469cf59af2","final_decision":{"decided_at":"2026-08-18T18:03:52Z","decision_basis":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
-            r#""outcome":"affirmative"},"input_context_fingerprint":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
-            r#""institution":{"org_id":"2f1c8d4e-0a1b-4c3d-9e8f-7a6b5c4d3e2f","org_name":"Example Bank PJSC","org_type":"bank"},"output_fingerprint":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#"{"data":{"consent":{"consent_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
+            r#""consent_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
+            r#""granted_at":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
+            r#""purpose_hash":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
+            r#""scope":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null}},"#,
+            r#""customer":{"data_provenance":{"disclosed_attributes":[],"statement":"Memtara holds no income, liquidity, risk-tolerance or holdings figure for this subject.","vault_root":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null}},"#,
+            r#""data_provenance_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
+            r#""subject_id":"user_9f2a"},"data_schema_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null}},"#,
+            r#""decision":{"business_process":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
+            r#""decision_id":"71386234-daae-4896-91fe-4c469cf59af2","final_decision":{"decided_at":"2026-08-18T18:03:52Z","decision_basis":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
+            r#""outcome":"affirmative"},"input_context_fingerprint":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
+            r#""institution":{"org_id":"2f1c8d4e-0a1b-4c3d-9e8f-7a6b5c4d3e2f","org_name":"Example Bank PJSC","org_type":"bank"},"output_fingerprint":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
             r#""status":"approved","timestamps":{"assessed_at":"2026-08-18T18:03:52Z","exported_at":"2026-08-18T18:04:00Z","opened_at":"2026-08-18T17:59:00Z"}},"evidence":{"cryptographic_proofs":[{"accepted_by_bb_verify":true,"circuit":"wealth_suitability","proof_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","public_inputs":["0x01","0x02"],"verification_key_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}],"evidence_artifacts":[{"digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","type":"zk_proof","uri":"proof/wealth_suitability.proof"}]},"#,
-            r#""evidence_schema_version":"1.2.0","human_review":{"action":"approved","human_review_protocol_version":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
+            r#""evidence_schema_version":"1.3.0","human_review":{"action":"approved","human_review_protocol_version":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
             r#""override":false,"override_reason":null,"performed":false,"review_duration_ms":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
             r#""review_duration_source":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
             r#""reviewed_at":{"state":"not_applicable","unpopulated_reason":"no human review step was performed on this decision; human_review.performed is false, and this field is not applicable rather than missing","value":null},"#,
@@ -1820,11 +1879,11 @@ mod tests {
             r#""model":null,"model_provenance":{"as_declared_at_open":{"declaration":"no_ai_participated","identity":{"config_fingerprint":null,"environment":null,"model_name":null,"model_version":null,"prompt_version":null,"provider":null,"system_prompt_or_policy_id":null,"timestamp":null},"#,
             r#""no_ai_attestation":"suitability produced by the deterministic rules engine; no model in the recommendation path","unidentified_reason":null},"corrected":false,"correction_count":0,"corrections":[],"declared_at":{"state":"recorded","unpopulated_reason":null,"value":"2026-08-18T17:59:00Z"},"#,
             r#""statement":"The model block in this record is what this organisation asserts about the AI system that participated in this decision. The declaration it made when the assessment was opened is preserved here under as_declared_at_open and is never altered by anything, including a correction. Note when that declaration is made: at open, in the same transaction as the assessment, before the subject's device has produced a proof, before a verdict exists and before any human review \u2014 so it is a statement about a decision that has not happened yet. Compare declared_at with decision.timestamps.assessed_at. Corrections are append-only and numbered from 1; a gap in correction_no means a correction was removed from the database after it was filed, and each one is separately committed to the audit chain."},"#,
-            r#""policy":{"decision_logic_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
-            r#""policy_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
-            r#""policy_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
-            r#""regulatory_control_mapping":[{"clause":"COB 3.1","framework":"DFSA"},{"clause":"5(c)","framework":"CBUAE"}],"source":"disclosure_requests.policy, snapshotted at open","thresholds":{"source":"product registry, snapshotted when the assessment was opened","threshold_set_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
-            r#""threshold_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.2.0; see schema/decision_evidence/v1.2.0.json for what would populate it","value":null},"#,
+            r#""policy":{"decision_logic_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
+            r#""policy_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
+            r#""policy_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
+            r#""regulatory_control_mapping":[{"clause":"COB 3.1","framework":"DFSA"},{"clause":"5(c)","framework":"CBUAE"}],"source":"disclosure_requests.policy, snapshotted at open","thresholds":{"source":"product registry, snapshotted when the assessment was opened","threshold_set_id":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
+            r#""threshold_version":{"state":"unpopulated","unpopulated_reason":"no source exists in memtara-api as of evidence schema 1.3.0; see schema/decision_evidence/v1.3.0.json for what would populate it","value":null},"#,
             r#""values":{"max_concentration_percent":20,"min_income":500000,"min_liquidity":250000,"product_risk_level":3}}}}"#,
         );
 
@@ -2128,7 +2187,7 @@ mod tests {
         });
         assert_eq!(
             derive_decision_basis(&concurring),
-            DecisionBasis::ProofAndHumanApproved
+            DecisionBasis::ProofAndHumanConcurred
         );
 
         let against = HumanReviewInputs::completed(CompletedReview {

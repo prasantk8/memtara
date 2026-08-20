@@ -1,0 +1,73 @@
+-- `wealth_requests.consent_grant_id` must survive the grant it names being
+-- deleted — a foreign key cannot do that, so this removes the one
+-- migrations/0011 added.
+--
+-- ---------------------------------------------------------------------
+-- WHY THIS IS A SEPARATE MIGRATION AND NOT AN EDIT TO 0011
+-- ---------------------------------------------------------------------
+-- Same rule 0010 followed rather than editing 0006, and 0002 followed rather
+-- than editing 0001: an applied migration is history, and editing it makes
+-- two databases that ran the same numbered file disagree about what it did.
+-- This one was found the same day it was written, by the attack test it
+-- exists to satisfy — `tests/break_it/test_attack_08_consent_revocation.py`
+-- step 4 — which is exactly the kind of finding this codebase's own
+-- convention says gets a new file, not a rewritten one.
+--
+-- ---------------------------------------------------------------------
+-- THE BUG
+-- ---------------------------------------------------------------------
+-- `on delete set null` sounds like the safe, tidy choice for a column that
+-- must not block the row it references from being deleted — and it was
+-- chosen for exactly that reason, so that a direct `DELETE FROM
+-- consent_grants` (the attack) would not be blocked by referential
+-- integrity and could actually be attempted. It does stop the block. It
+-- also does something migrations/0011's own header did not think through:
+-- it erases the ONE THING `GET .../decision-evidence` needs in order to go
+-- on checking that decision's consent binding events after the grant is
+-- gone. `wealth/evidence.rs::get_decision_evidence` widens its
+-- `binding_integrity` scope by reading the grant id back out of the served
+-- record (`data.consent.consent_id.value`) — and once the grant row is
+-- deleted, `consent_grant_id` is nulled by this column's own `on delete set
+-- null`, the served consent block degrades to `unpopulated` (correctly —
+-- see 0011's header on why that is the honest reading), and its `value` is
+-- now `null` too. The id needed to keep checking `consent_grant_bound`/
+-- `consent_revocation_bound` was thrown away by the same statement that
+-- created the finding those events exist to catch.
+--
+-- Verified against the running server: after the DELETE, `binding_integrity`
+-- silently stopped covering the deleted grant's events at all — reporting
+-- INTACT (because the only bindings still in scope were the wealth
+-- decision's own model/policy ones), not ALTERED and not even
+-- `source_row_missing`. A verifier that goes quiet about exactly the row
+-- that was attacked, at exactly the moment it was attacked, is worse than
+-- one that never covered it: it looks like a clean result.
+--
+-- ---------------------------------------------------------------------
+-- THE FIX, AND THE PRECEDENT IT FOLLOWS
+-- ---------------------------------------------------------------------
+-- Drop the foreign key. `wealth_requests.consent_grant_id` becomes a plain
+-- `uuid` column, unenforced, for the same reason `audit_log.ref_id` and
+-- `decision_reviews.org_id`/`decision_model_attestation_corrections.org_id`
+-- carry none (migrations/0005's header, restated by both 0006 and 0009):
+-- every referential action available is wrong for a column that has to be
+-- able to outlive the row it once pointed to. `restrict`/`no action` (the
+-- default with no `on delete` clause at all) would block the DELETE this
+-- table exists to let happen. `cascade` would delete the wealth decision
+-- along with the grant that once authorised it — destroying evidence a
+-- decision was ever reached, the same mistake 0011's header rejects for
+-- revocation itself, one column over. `set null` erases the pointer an
+-- examiner needs at exactly the moment they need it most. None of the three
+-- available actions is honest here; the column has to be able to say "this
+-- decision was opened under grant X" forever, including after X is gone,
+-- and only an unenforced column can say that.
+--
+-- `wealth/evidence.rs` does not change: `req.consent_grant_id` still
+-- resolves to `Some(id)` after this migration even once the row is deleted,
+-- the grant lookup still comes back `None`, and the served consent block
+-- still reads `unpopulated` with the same reason — that part of 0011's
+-- design was already correct. What changes is that `get_decision_evidence`
+-- can now always find the id to widen its replay scope with, so the grant's
+-- own binding events go on being checked, and reported, after the row that
+-- backed them is gone — which is the entire point of a binding event
+-- surviving its source row (see `replay.rs`'s `SourceRowMissing`).
+alter table wealth_requests drop constraint wealth_requests_consent_grant_id_fkey;

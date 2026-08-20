@@ -413,6 +413,20 @@ async fn issue_wealth_request(
         return Err(ApiError::NotFoundDetail(format!("no user {}", body.user_id)));
     }
 
+    // -----------------------------------------------------------------
+    // CONSENT. Refuse before anything else about this decision is written,
+    // naming the covering grant's absence or its revocation — never a bare
+    // 403. `consents::require_covering_grant` is the one place "does a
+    // grant cover this purpose" is decided; see its doc comment and
+    // `docs/STAGE_PLAN_CONSENT_AND_WITNESS.md` §A3 for why a decision
+    // already opened under a since-revoked grant STANDS rather than being
+    // unwound here — this check runs once, at open, and its answer is what
+    // the decision's evidence (`wealth/evidence.rs`) later shows as the
+    // consent basis it was opened under.
+    let consent_grant_id =
+        crate::consents::require_covering_grant(&state.db, org_id, body.user_id, BUSINESS_PROCESS)
+            .await?;
+
     // Read separately rather than added to `products::ProductRow`, which
     // belongs to the registry module. The column is new (migrations/0007)
     // and the trigger that maintains it is the authority on its value; this
@@ -475,9 +489,9 @@ async fn issue_wealth_request(
         insert into wealth_requests (
             request_id, product_id, product_isin, product_name, product_ref,
             min_income, min_liquidity, max_concentration_percent, product_risk_level,
-            window_start, window_end, terms_version
+            window_start, window_end, terms_version, consent_grant_id
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         "#,
         request_id,
         product.id,
@@ -491,6 +505,7 @@ async fn issue_wealth_request(
         window_start,
         window_end,
         terms_version,
+        consent_grant_id,
     )
     .execute(&mut *tx)
     .await?;
@@ -558,6 +573,12 @@ async fn issue_wealth_request(
             // that later disputes which declaration it made can be shown the
             // event, not just the row someone could have updated.
             "ai_participation_declared": attestation.declaration,
+            // The grant this decision was authorised under. Narrative only —
+            // this event's payload is `PayloadEncoding::Serde` and is never
+            // rebuilt, so it is not what makes the consent basis tamper-
+            // evident. That is `consent_grant_bound`/`consent_revocation_
+            // bound` (audit/binding.rs), keyed on the grant's own id.
+            "consent_grant_id": consent_grant_id,
             "dfsa_rules": ["COB 3.1"],
         }),
     )
