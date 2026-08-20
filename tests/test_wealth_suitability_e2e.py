@@ -67,6 +67,13 @@ PRODUCT_ISIN = "XS1234567890"
 # unlike the brief's example does pass its own check digit.
 OTHER_ISIN = "US0378331005"
 
+# Must match `wealth::BUSINESS_PROCESS` (backend/api/src/wealth/mod.rs) — the
+# scope string `require_covering_grant` checks a consent grant's `scope`
+# array for. See `tests/break_it/conftest.py`'s `make_desk`, which grants
+# this same scope for the same reason: `issue_wealth_request` has refused
+# every assessment with no covering grant since migrations/0011 landed.
+WEALTH_BUSINESS_PROCESS = "wealth.suitability_recommendation"
+
 # The limit `rate_limited_server` runs with. Small so the test is quick;
 # the production default is 10 per minute.
 RATE_LIMIT = 3
@@ -191,6 +198,21 @@ def desk(memtara_server: str):
             timeout=10.0,
         )
         assert put.status_code == 200, put.text
+
+        # A live, unrevoked consent grant covering the wealth flow's
+        # business process — see `WEALTH_BUSINESS_PROCESS` above.
+        consent = httpx.post(
+            f"{memtara_server}/api/v1/consents",
+            json={
+                "user_id": str(user_id),
+                "scope": [WEALTH_BUSINESS_PROCESS],
+                "consent_version": "wealth-e2e-suite-default-v1",
+                "granted_via": "mobile_app",
+            },
+            headers={"Authorization": f"Bearer {org_body['api_key']}"},
+            timeout=10.0,
+        )
+        assert consent.status_code == 201, consent.text
 
         yield {
             "org_id": org_body["id"],
@@ -1329,7 +1351,7 @@ def test_proof_submissions_are_rate_limited_per_user(rate_limited_server, desk):
 
     # A different user is unaffected — otherwise the first busy client takes
     # the whole tenant down with it.
-    other_user, other_session = _seed_client(rate_limited_server)
+    other_user, other_session = _seed_client(rate_limited_server, desk["api_key"])
     try:
         request = wc.open_assessment(
             rate_limited_server, desk["api_key"], user_id=other_user, product_isin=PRODUCT_ISIN
@@ -1354,8 +1376,14 @@ def test_proof_submissions_are_rate_limited_per_user(rate_limited_server, desk):
         conn.close()
 
 
-def _seed_client(base_url: str) -> tuple[str, str]:
-    """A second user with a live session, for the isolation half of the test."""
+def _seed_client(base_url: str, api_key: str) -> tuple[str, str]:
+    """A second user with a live session, for the isolation half of the test.
+
+    `api_key` is the bank's, from `desk` — the same one used to register the
+    product this file's `desk` fixture already covers with consent; this
+    second user needs its own grant, `issue_wealth_request` checks it per
+    user, not per org.
+    """
     conn = db_connect()
     user_id = str(uuid.uuid4())
     token = f"rate-limit-{uuid.uuid4().hex}"
@@ -1370,6 +1398,18 @@ def _seed_client(base_url: str) -> tuple[str, str]:
         hash=_hash_token(token),
     )
     conn.close()
+    consent = httpx.post(
+        f"{base_url}/api/v1/consents",
+        json={
+            "user_id": user_id,
+            "scope": [WEALTH_BUSINESS_PROCESS],
+            "consent_version": "wealth-e2e-suite-default-v1",
+            "granted_via": "mobile_app",
+        },
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=10.0,
+    )
+    assert consent.status_code == 201, consent.text
     return user_id, token
 
 

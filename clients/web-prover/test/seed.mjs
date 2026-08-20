@@ -96,6 +96,26 @@ export async function seedDesk({ baseUrl, databaseUrl, oracleCircuit, terms, vau
     throw new Error(`PUT /vault failed: ${vaultPut.status} ${await vaultPut.text()}`);
   }
 
+  // A live, unrevoked consent grant covering the wealth flow's business
+  // process. Must match `wealth::BUSINESS_PROCESS`
+  // (backend/api/src/wealth/mod.rs) — see tests/break_it/conftest.py's
+  // `make_desk` for why every desk needs one: `issue_wealth_request` has
+  // refused every assessment with no covering grant since
+  // migrations/0011_consent_grants.sql landed.
+  const consentRes = await fetch(`${baseUrl}/api/v1/consents`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${org.api_key}` },
+    body: JSON.stringify({
+      user_id: userId,
+      scope: ['wealth.suitability_recommendation'],
+      consent_version: 'web-prover-e2e-suite-default-v1',
+      granted_via: 'mobile_app',
+    }),
+  });
+  if (consentRes.status !== 201) {
+    throw new Error(`POST /api/v1/consents failed: ${consentRes.status} ${await consentRes.text()}`);
+  }
+
   const requestRes = await fetch(`${baseUrl}/api/v1/issue-wealth-request`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${org.api_key}` },

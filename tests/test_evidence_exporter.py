@@ -67,6 +67,10 @@ USER_ID = "0a3f2b7c-4d51-4b8e-9d2a-6c7e8f901234"
 ORG_ID = "5c1d8e2f-7a90-4b1c-8d3e-2f4a6b8c0d1e"
 PRODUCT_ISIN = "XS1234567890"
 
+# Must match `wealth::BUSINESS_PROCESS` (backend/api/src/wealth/mod.rs) — see
+# `tests/break_it/conftest.py`'s `make_desk` for why every desk needs one.
+WEALTH_BUSINESS_PROCESS = "wealth.suitability_recommendation"
+
 VKEY_SHA256 = "9c1185a5c5e9fc54612808977ee8f548b2258d31ddadef4f0c9d8b6a2f2b4e77"
 ACCEPTED_PROOF_SHA256 = "b1946ac92492d2347c6235b4d2611184b3b0c94b1a9a2b1c9d0e5f6a7b8c9d01"
 REJECTED_PROOF_SHA256 = "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
@@ -717,6 +721,19 @@ def test_integration_export_against_a_live_server(memtara_server, tmp_path):
             timeout=10.0,
         )
         assert product.status_code == 201, product.text
+
+        consent = httpx.post(
+            f"{memtara_server}/api/v1/consents",
+            headers=auth,
+            json={
+                "user_id": str(user_id),
+                "scope": [WEALTH_BUSINESS_PROCESS],
+                "consent_version": "evidence-export-suite-default-v1",
+                "granted_via": "mobile_app",
+            },
+            timeout=10.0,
+        )
+        assert consent.status_code == 201, consent.text
 
         opened = httpx.post(
             f"{memtara_server}/api/v1/issue-wealth-request",

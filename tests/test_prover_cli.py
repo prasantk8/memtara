@@ -44,6 +44,10 @@ import wealth_client as wc
 PROVE = REPO_ROOT / "clients" / "prover" / "memtara-prove"
 
 PRODUCT_ISIN = "XS1234567890"
+
+# Must match `wealth::BUSINESS_PROCESS` (backend/api/src/wealth/mod.rs) — see
+# `tests/break_it/conftest.py`'s `make_desk` for why every desk needs one.
+WEALTH_BUSINESS_PROCESS = "wealth.suitability_recommendation"
 PRODUCT_NAME = "5-Year S&P Principal Protected Note"
 MIN_INCOME = 500_000
 MIN_LIQUIDITY = 1_000_000
@@ -247,6 +251,18 @@ def desk(memtara_server: str):
         uid=user_id,
         hash=_hash_token(session_token),
     )
+
+    httpx.post(
+        f"{memtara_server}/api/v1/consents",
+        json={
+            "user_id": user_id,
+            "scope": [WEALTH_BUSINESS_PROCESS],
+            "consent_version": "prover-cli-suite-default-v1",
+            "granted_via": "mobile_app",
+        },
+        headers={"Authorization": f"Bearer {org['api_key']}"},
+        timeout=10.0,
+    ).raise_for_status()
 
     try:
         yield {

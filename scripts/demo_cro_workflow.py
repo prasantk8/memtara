@@ -515,6 +515,22 @@ def run(args: argparse.Namespace) -> int:
         ui.detail("vault root synced", vault_root[:22] + "…")
         ui.note("a Poseidon commitment; the server pins it so a device cannot invent a tree later")
 
+        status, consent = http_json(
+            "POST",
+            f"{base_url}/api/v1/consents",
+            {
+                "user_id": user_id,
+                "scope": ["wealth.suitability_recommendation"],
+                "consent_version": "cro-demo-v1",
+                "granted_via": "mobile_app",
+            },
+            api_key,
+        )
+        if status != 201:
+            raise RuntimeError(f"could not record the client's consent: {consent}")
+        ui.detail("consent on file", "wealth.suitability_recommendation")
+        ui.note("issue-wealth-request refuses without this — a purpose binding is not a permission")
+
         # -------------------------------------------------------------
         ui.step("The advisor asks the AI to recommend the product")
         # -------------------------------------------------------------
