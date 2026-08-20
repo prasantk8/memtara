@@ -1202,10 +1202,37 @@ mod tests {
             };
             use crate::audit::checkpoint;
             use crate::audit::record_in_tx;
+            use crate::audit::AUDIT_CHAIN_LOCK_KEY;
             use crate::crypto::signer::IssuerKey;
+            use sqlx::Connection as _;
+
+            // `checkpoint.rs`'s db tests get their isolation for free by
+            // never committing — `pg_advisory_xact_lock` then stays held
+            // for the test's whole life and no concurrent test can append
+            // or delete underneath them (see that module's comment). This
+            // test can't use that trick: `sweep_once` below reads the
+            // checkpoint through a DIFFERENT pool connection, so the
+            // checkpoint has to be real-committed for it to see it. Without
+            // holding the lock some other way across that commit, a
+            // concurrently-running test is free to append or delete
+            // `audit_log` rows in the window between our commit and our
+            // final re-verify — which is exactly the `RowCountMismatch`
+            // this test was observed to produce under ordinary `cargo test`
+            // parallelism once other audit-chain tests existed alongside
+            // it. A session-level `pg_advisory_lock`, held on one dedicated
+            // connection from before the first append to after the last
+            // read, closes the same window across the commit: it is
+            // reentrant on this same session, so `emit_in_tx`'s own
+            // `pg_advisory_xact_lock` call below (issued on this same
+            // connection, inside the transaction) does not block against it.
+            let mut lock_conn = db.acquire().await.unwrap();
+            sqlx::query!("select pg_advisory_lock($1)", AUDIT_CHAIN_LOCK_KEY)
+                .execute(&mut *lock_conn)
+                .await
+                .unwrap();
 
             let signer = IssuerKey::from_seed([9u8; 32], "https://api.memtara.test");
-            let mut tx = db.begin().await.unwrap();
+            let mut tx = lock_conn.begin().await.unwrap();
             record_in_tx(&mut tx, None, "anchor_test_dead_tsa", None, serde_json::json!({"n": 1}))
                 .await
                 .unwrap();
@@ -1272,6 +1299,15 @@ mod tests {
             let _ = sqlx::query!("delete from audit_log where event_type = 'anchor_test_dead_tsa'")
                 .execute(&db)
                 .await;
+
+            // Release last: everything above, including the cleanup delete,
+            // must finish before any other test's append or delete is free
+            // to interleave.
+            let _: bool = sqlx::query_scalar!("select pg_advisory_unlock($1)", AUDIT_CHAIN_LOCK_KEY)
+                .fetch_one(&mut *lock_conn)
+                .await
+                .unwrap()
+                .expect("pg_advisory_unlock returns a non-null boolean");
         }
 
         /// The success path, end to end against the mock: sweep, persist,
@@ -1285,10 +1321,23 @@ mod tests {
             };
             use crate::audit::checkpoint;
             use crate::audit::record_in_tx;
+            use crate::audit::AUDIT_CHAIN_LOCK_KEY;
             use crate::crypto::signer::IssuerKey;
+            use sqlx::Connection as _;
+
+            // Same reasoning as the sibling dead-TSA test above: this
+            // checkpoint must be real-committed for `sweep_once` to see it
+            // through its own pool connection, so isolation has to come
+            // from a session-level advisory lock held across that commit
+            // rather than from never committing at all.
+            let mut lock_conn = db.acquire().await.unwrap();
+            sqlx::query!("select pg_advisory_lock($1)", AUDIT_CHAIN_LOCK_KEY)
+                .execute(&mut *lock_conn)
+                .await
+                .unwrap();
 
             let signer = IssuerKey::from_seed([10u8; 32], "https://api.memtara.test");
-            let mut tx = db.begin().await.unwrap();
+            let mut tx = lock_conn.begin().await.unwrap();
             record_in_tx(&mut tx, None, "anchor_test_success", None, serde_json::json!({"n": 1}))
                 .await
                 .unwrap();
@@ -1331,6 +1380,12 @@ mod tests {
             let _ = sqlx::query!("delete from audit_log where event_type = 'anchor_test_success'")
                 .execute(&db)
                 .await;
+
+            let _: bool = sqlx::query_scalar!("select pg_advisory_unlock($1)", AUDIT_CHAIN_LOCK_KEY)
+                .fetch_one(&mut *lock_conn)
+                .await
+                .unwrap()
+                .expect("pg_advisory_unlock returns a non-null boolean");
         }
     }
 }
