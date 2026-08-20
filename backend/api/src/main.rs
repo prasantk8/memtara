@@ -1,6 +1,7 @@
 mod audit;
 mod auth;
 mod config;
+mod consents;
 mod crypto;
 mod db;
 mod disclosure;
@@ -16,6 +17,7 @@ mod vault_sync;
 mod verify;
 mod wealth;
 
+use audit::anchor::{AnchorPolicy, AnchorProvider, Rfc3161AnchorProvider};
 use auth::otp::{LoggingOtpProvider, OtpProvider};
 use auth::uae_pass::{StubUaePassProvider, UaePassProvider};
 use auth::webauthn::WebauthnCeremonies;
@@ -59,6 +61,18 @@ async fn main() -> anyhow::Result<()> {
         redirect_uri: config.uae_pass_redirect_uri.clone(),
     });
 
+    // RFC 3161, against freetsa.org unless MEMTARA_ANCHOR_TSA_URL says
+    // otherwise. Unlike `otp_provider`/`uae_pass_provider` above, this is
+    // the REAL implementation by default rather than a stub — an anchor
+    // that fabricates its own receipt witnesses nothing (see
+    // `anchor::LoggingAnchorProvider`'s doc comment), so there is no dev
+    // stand-in that would be honest to wire in here. Fails boot rather than
+    // starting silently unwitnessed if the HTTP client cannot even be
+    // constructed (a malformed proxy config, not a network failure — the
+    // network is only touched later, from the sweep, never here).
+    let anchor_provider: Arc<dyn AnchorProvider> = Arc::new(Rfc3161AnchorProvider::from_env()?);
+    let anchor_policy = Arc::new(AnchorPolicy::from_env());
+
     let state = AppState {
         db: pool,
         config: Arc::new(config.clone()),
@@ -72,6 +86,8 @@ async fn main() -> anyhow::Result<()> {
             config.proof_rate_limit,
             config.proof_rate_limit_window,
         )),
+        anchor_provider,
+        anchor_policy,
     };
 
     // Start signing the audit chain's head. Before the server accepts
@@ -81,6 +97,13 @@ async fn main() -> anyhow::Result<()> {
     // audit/checkpoint.rs for what the interval means and what it does not
     // cover.
     audit::checkpoint::spawn(state.clone());
+
+    // Start witnessing checkpoints externally. A separate loop from the one
+    // above and deliberately so — see audit/anchor.rs's header for why
+    // checkpointing must never block on this, and why "not yet anchored"
+    // (this loop hasn't reached it) and "anchor mismatch" (something is
+    // wrong) are different words for a reason.
+    audit::anchor::spawn(state.clone());
 
     let app = Router::new()
         .route("/healthz", get(healthz))
@@ -95,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(crypto::router())
         .merge(issuance::router())
         .merge(wealth::router())
+        .merge(consents::router())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

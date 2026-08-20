@@ -13,9 +13,17 @@
 
 pytest==8.3.4
 httpx==0.28.1
-cryptography>=42,<51     # Ed25519 verification (integrations/aihoots)
+cryptography>=42,<51     # Ed25519 verification (integrations/aihoots); RFC 3161 anchor receipts
+                         # (scripts/bundle/rfc3161.py, bundle step 7c) reuse this same, already-
+                         # required dependency rather than adding a second one.
 pg8000==1.31.5           # pure-Python Postgres driver; seeds the verified-proof row
 faker==40.36.0           # synthetic UAE resident profiles for the demo report
+asn1crypto==1.5.1        # pure-Python (no compiled extension) CMS/TSP parsing for the offline
+                         # RFC 3161 anchor-receipt check (scripts/bundle/rfc3161.py, step 7c).
+                         # Was already present as a transitive dependency of pg8000's scramp; made
+                         # explicit because the bundle verifier depends on it directly and "the
+                         # bundle's verifier must not grow a compiled dependency" is a real
+                         # constraint, not a preference — asn1crypto has no C/Rust extension.
 
 # Pulled in because the handshake test runs AIHOOTS's real FastAPI gateway
 # in-process. Kept in step with tests/aihoots_reference/requirements.txt.

@@ -476,12 +476,22 @@ def test_the_published_checkpoint_is_verifiable_without_this_server(memtara_serv
     where to get the key — so a counterparty can pin the head today and
     contradict us tomorrow.
 
-    It also asserts the half that is NOT built, so nobody reads more into
-    the fix than is there: no external anchor exists yet, which means we
-    retain the ability to delete our own checkpoints. What stands between an
-    insider and a rewritten history today is possession of the signing key
-    and whatever copies counterparties already hold — a real control, and a
-    weaker one than a third-party witness.
+    UPDATED FOR THE ANCHORING STAGE: this test used to assert
+    `published["external_anchor"] is None` — true when nothing anchored
+    checkpoints yet (`audit_checkpoints.anchor_target` was null on every
+    row, migration 0008). That capability now exists
+    (`backend/api/src/audit/anchor.rs`, migration 0012,
+    `tests/break_it/test_attack_12_rewrite_history.py`), so a bare `is None`
+    would be asserting the OLD absence of a feature that has since landed —
+    exactly the "world changed, test kept lying" trap the stage plan warns
+    about. `external_anchor` is a required object now, never `None`
+    (`checkpoint.rs::ExternalAnchorResponse`); what this test asserts is
+    the shape it always carries and the fact that a JUST-signed checkpoint
+    is honestly reported `pending` rather than silently invented an
+    anchor — the anchoring sweep is deliberately not inline with checkpoint
+    creation (`anchor.rs`'s header explains why), so "pending" immediately
+    after `POST /audit/checkpoints` is the correct, honest answer, not a
+    residual gap in this test.
     """
     desk = make_desk(memtara_server, isin="XS0000000091")
     _run_assessment(memtara_server, desk)
@@ -499,9 +509,22 @@ def test_the_published_checkpoint_is_verifiable_without_this_server(memtara_serv
         "renumbered and replayed as the current one"
     )
 
-    assert published["external_anchor"] is None, (
-        "NOT YET BUILT, and reported rather than implied: no external witness holds a copy of "
-        "this checkpoint, so Memtara can still delete its own checkpoints. Do not describe the "
-        "audit chain as beyond our ability to rewrite until audit_checkpoints.anchor_target is "
-        "populated by a real anchoring job (migration 0008)."
+    anchor = published["external_anchor"]
+    assert anchor is not None, (
+        "external_anchor is a required field now (one of anchored/pending/overdue) — a bare "
+        "absence would blur 'not yet anchored' back into 'no such capability', which is exactly "
+        "the distinction B2 exists to keep visible"
     )
+    assert anchor["status"] in ("anchored", "pending", "overdue"), anchor
+    if anchor["status"] == "pending":
+        # The expected case immediately after POST /audit/checkpoints: the
+        # background sweep (or an explicit POST /audit/anchors/sweep, which
+        # this test does not call) has not necessarily reached this
+        # checkpoint yet, and that is not a finding — see anchor.rs's
+        # header on why anchoring is deliberately not inline.
+        assert "age_seconds" in anchor
+    elif anchor["status"] == "anchored":
+        # Also a legitimate outcome (a concurrent sweep from another actor
+        # against this shared deployment could have reached it first); if
+        # so, the receipt must actually be there.
+        assert anchor.get("receipt_der_base64"), anchor

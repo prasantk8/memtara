@@ -46,6 +46,8 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -88,6 +90,14 @@ BUILDER_NAME = "scripts/bundle/build_bundle.py"
 # one filename to produce rather than a format to negotiate.
 CHECKPOINT_FILENAME = "audit_chain_checkpoint.json"
 
+# The pinned trust anchor for the checkpoint's external witness (RFC 3161).
+# Fixed here and in verify_bundle.py's step 7c for the same reason
+# CHECKPOINT_FILENAME is. See scripts/bundle/rfc3161.py's header for why this
+# must be a PINNED copy shipped independently of the token rather than
+# whatever certificate chain the token happens to embed.
+ANCHOR_CA_FILENAME = "tsa_ca_chain.pem"
+DEFAULT_ANCHOR_CA_FILE = Path(__file__).resolve().parent / "pinned_anchors" / "freetsa_root_ca.pem"
+
 DEFAULT_VKEY_DIR = REPO_ROOT / "circuits" / "wealth_suitability" / "vkey"
 SCHEMA_SOURCE = Path(__file__).resolve().parent / "schema" / "case_file_pack.v1.schema.json"
 VERIFY_DOC_SOURCE = REPO_ROOT / "docs" / "VERIFY.md"
@@ -107,8 +117,9 @@ AIHOOTS_VENDORED_FILES = [
 ]
 
 # Copied into every bundle so the procedure can be run with nothing but the
-# bundle and a Python interpreter.
-TOOL_MODULES = ["verify_bundle.py", "jwks.py", "structure.py", "evidence_ops.py"]
+# bundle and a Python interpreter. `rfc3161.py` is step 7c's cryptography —
+# see that module's header for why it is separate from verify_bundle.py.
+TOOL_MODULES = ["verify_bundle.py", "jwks.py", "structure.py", "evidence_ops.py", "rfc3161.py"]
 
 # Pinned from .github/workflows/ci.yml, which is the version the committed
 # vkey was regenerated and diffed against. A bundle that named a bb version
@@ -122,6 +133,38 @@ BB_INSTALL = (
 
 class BuildError(Exception):
     """Anything that should stop the build rather than produce a partial bundle."""
+
+
+# ---------------------------------------------------------------------------
+# The chain-head checkpoint — fetched live, the same "producing evidence
+# legitimately requires the system that produced the decision to still
+# exist" rule this module's docstring states for everything else.
+# ---------------------------------------------------------------------------
+
+
+def fetch_checkpoint_covering(base_url: str, seq: int, timeout: float = 30.0) -> dict | None:
+    """`GET /audit/checkpoints/covering/:seq`. Returns the parsed response —
+    which may have `covered: false` and no checkpoint, a true and useful
+    answer about a row still inside the residual exposure window — or
+    `None` if the endpoint could not be reached at all. Unauthenticated, on
+    purpose (see `audit/checkpoint.rs::router` — a checkpoint whose whole
+    purpose is to be held by third parties is not published if it needs an
+    API key to read).
+    """
+    url = f"{base_url.rstrip('/')}/audit/checkpoints/covering/{seq}"
+    request = urllib.request.Request(
+        url, headers={"Accept": "application/json", "User-Agent": f"memtara-bundle/{BUNDLE_FORMAT_VERSION}"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read()
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        return None
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 # ---------------------------------------------------------------------------
@@ -203,10 +246,17 @@ def pinned_dependencies(*, bb_version_pin: str, bb_observed: str | None, aihoots
         },
         "python": {
             "minimum": "3.9",
-            "third_party_packages_required_by_the_verifier": ["cryptography (step 5 only)"],
+            "third_party_packages_required_by_the_verifier": [
+                "cryptography (steps 5 and 8 always; step 7c when an anchor receipt is present)",
+                "asn1crypto (step 7c only, when an anchor receipt is present — pure Python, no "
+                "compiled extension)",
+            ],
             "note": (
-                "Steps 1-4 and 6 run on a bare interpreter. Only the EdDSA check in step 5 "
-                "needs `cryptography`; without it that step reports NOT RUN rather than PASS."
+                "Steps 1-4 and 6 run on a bare interpreter. Step 5's EdDSA check and step 8's "
+                "token check need `cryptography`; without it they report NOT RUN rather than "
+                "PASS. Step 7c's anchor-receipt check needs both `cryptography` and "
+                "`asn1crypto`, but only when the checkpoint is actually anchored — an absent or "
+                "pending anchor has nothing for either library to check."
             ),
         },
     }
@@ -238,6 +288,7 @@ def build_bundle(
     proof_path: Path | None = None,
     aihoots_audit_path: Path | None = None,
     checkpoint_path: Path | None = None,
+    anchor_ca_path: Path | None = None,
     vendor_aihoots: bool = True,
     bb_version_pin: str = DEFAULT_BB_VERSION,
     signing_key: Any = None,
@@ -446,13 +497,12 @@ def build_bundle(
         )
 
     # --- the chain-head checkpoint, when there is one to carry ---------------
-    # RESERVED SLOT — wire-in point for the signed chain-head checkpoint being
-    # built separately (see docs/BREAK_IT_FINDINGS.md: the terminal row of the
-    # chain is unprotected, because nothing commits to its event_hash and the
-    # payload is not stored, so it cannot be recomputed). When that lands, a
-    # builder passes `checkpoint_path` and everything downstream already
-    # exists: step 7c in verify_bundle.py, the `absent` entry below, and the
-    # VERIFY.md text. Nothing else has to change.
+    # Was a reserved slot; landed alongside the anchoring work in
+    # audit/checkpoint.rs and audit/anchor.rs. Fetched live (`--request-id`
+    # mode) via `GET /audit/checkpoints/covering/:seq` — unauthenticated,
+    # like the JWKS fetch above — or supplied as a file with
+    # `--chain-checkpoint` for the offline/regression-testable path this
+    # module's docstring argues for everywhere else.
     if checkpoint_path is not None:
         checkpoint_path = Path(checkpoint_path)
         if not checkpoint_path.exists():
@@ -461,9 +511,11 @@ def build_bundle(
             CHECKPOINT_FILENAME,
             checkpoint_path.read_bytes(),
             (
-                "A signed commitment to the position of the chain head at a point in time. "
-                "It is what closes the terminal-row gap: without it, the newest record in any "
-                "segment is protected by nothing, because protection comes from being followed."
+                "A signed commitment to the position of the chain head at a point in time, "
+                "plus (when anchored) an external witness's receipt over it — see "
+                f"{ANCHOR_CA_FILENAME}'s note below. Closes the terminal-row gap: without it, "
+                "the newest record in any segment is protected by nothing, because protection "
+                "comes from being followed."
             ),
         )
     else:
@@ -473,7 +525,8 @@ def build_bundle(
                 "reason": (
                     "This builder was not given a signed chain-head checkpoint. That is a fact "
                     "about this bundle and not about the deployment: audit/checkpoint.rs signs "
-                    "them and GET /orgs/:id/audit-chain/checkpoint serves them. A hash chain "
+                    "them and serves them at GET /audit/checkpoints/latest and "
+                    "GET /audit/checkpoints/covering/:seq, unauthenticated. A hash chain "
                     "protects every record that has been FOLLOWED by another record, or covered "
                     "by a signed checkpoint; the last row in the chain is followed by nothing, "
                     "and Memtara's log stores no payload column, so it cannot be recomputed "
@@ -483,7 +536,41 @@ def build_bundle(
                     "window, the checkpointing interval, in which the newest rows are covered by "
                     "neither mechanism. See VERIFY.md step 7."
                 ),
-                "status": "a builder given --chain-checkpoint will populate this",
+                "status": "a builder given --chain-checkpoint (or a live --request-id fetch) will populate this",
+            }
+        )
+
+    # --- the anchor's pinned trust anchor -------------------------------------
+    # Ships alongside the checkpoint whether or not THIS checkpoint has been
+    # anchored yet — a reader needs the pinned CA to interpret an anchor
+    # receipt in a LATER checkpoint too, and shipping it unconditionally
+    # means rebuilding a bundle never depends on the anchoring sweep's own
+    # timing. See scripts/bundle/rfc3161.py's header for why this must be a
+    # pinned, independently-obtained copy rather than whatever chain a token
+    # embeds.
+    if anchor_ca_path is not None:
+        anchor_ca_path = Path(anchor_ca_path)
+        if not anchor_ca_path.exists():
+            raise BuildError(f"--anchor-ca-file: no such file: {anchor_ca_path}")
+        record(
+            ANCHOR_CA_FILENAME,
+            anchor_ca_path.read_bytes(),
+            (
+                "The pinned trust anchor for the checkpoint's external witness (RFC 3161). "
+                "step 7c verifies the anchor receipt's embedded certificate chain against THIS "
+                "file, not against whatever chain the receipt itself carries — a token can "
+                "embed any self-signed certificate it likes, so trusting the embedded chain "
+                "alone would let anyone forge an internally-consistent 'anchor'."
+            ),
+        )
+    else:
+        absent.append(
+            {
+                "path": ANCHOR_CA_FILENAME,
+                "reason": (
+                    "No pinned TSA trust anchor was supplied, so step 7c cannot make a trust "
+                    "decision about any anchor receipt in this bundle even if one is present."
+                ),
             }
         )
 
@@ -743,9 +830,31 @@ def _parser() -> argparse.ArgumentParser:
     extra.add_argument(
         "--chain-checkpoint",
         type=Path,
-        help=f"a signed chain-head checkpoint, written into the bundle as {CHECKPOINT_FILENAME}. "
-        "Reserved: no deployment produces one yet. Until it does, the newest event in the "
-        "audit segment is protected by nothing.",
+        help=f"a signed chain-head checkpoint (the JSON body of GET /audit/checkpoints/covering/:seq "
+        f"or /latest), written into the bundle as {CHECKPOINT_FILENAME}. In --request-id mode this "
+        "is fetched automatically unless --no-chain-checkpoint-fetch is given; pass this to use a "
+        "saved response instead, for the same reason --evidence-json exists.",
+    )
+    extra.add_argument(
+        "--no-chain-checkpoint-fetch",
+        action="store_true",
+        help="in --request-id mode, do not auto-fetch a checkpoint; build without one and record "
+        "it as absent.",
+    )
+    extra.add_argument(
+        "--anchor-ca-file",
+        type=Path,
+        default=DEFAULT_ANCHOR_CA_FILE,
+        help=f"pinned TSA trust anchor, written into the bundle as {ANCHOR_CA_FILENAME}. Defaults "
+        "to this repository's pinned freetsa.org root CA "
+        "(scripts/bundle/pinned_anchors/freetsa_root_ca.pem) — override when "
+        "MEMTARA_ANCHOR_TSA_URL points at a different TSA.",
+    )
+    extra.add_argument(
+        "--no-anchor-ca",
+        action="store_true",
+        help="do not ship a pinned TSA trust anchor; step 7c then cannot make a trust decision "
+        "about any anchor receipt even if the checkpoint carries one.",
     )
     extra.add_argument(
         "--provenance",
@@ -823,6 +932,30 @@ def main(argv: list[str] | None = None) -> int:
         if args.aihoots_audit:
             pack["aihoots"] = collect_aihoots(args.aihoots_audit, pack_proof_hashes(pack))
 
+        # The chain-head checkpoint. `--chain-checkpoint` wins if given (the
+        # regression-testable path); otherwise, in live --request-id mode,
+        # fetch the checkpoint covering this assessment's newest audit
+        # event — unauthenticated, so a network hiccup here is the same
+        # class of "record it as absent, do not abandon the whole bundle"
+        # decision `--no-jwks-fetch`/binding-unavailable already make.
+        checkpoint_path = args.chain_checkpoint
+        checkpoint_tmp: Path | None = None
+        if checkpoint_path is None and args.request_id and not args.no_chain_checkpoint_fetch:
+            excerpt = pack.get("audit_chain_excerpt") or []
+            newest_seq = max(
+                (e.get("seq") for e in excerpt if isinstance(e, dict) and isinstance(e.get("seq"), int)),
+                default=None,
+            )
+            if newest_seq is not None:
+                covering = fetch_checkpoint_covering(args.base_url, newest_seq)
+                if covering is not None and covering.get("checkpoint") is not None:
+                    checkpoint_tmp = Path(args.output) / "_fetched_checkpoint.json"
+                    checkpoint_tmp.parent.mkdir(parents=True, exist_ok=True)
+                    checkpoint_tmp.write_text(
+                        json.dumps(covering["checkpoint"], indent=2, sort_keys=True), encoding="utf-8"
+                    )
+                    checkpoint_path = checkpoint_tmp
+
         snapshot = None
         if args.jwks_file:
             raw = json.loads(Path(args.jwks_file).read_text(encoding="utf-8"))
@@ -850,12 +983,15 @@ def main(argv: list[str] | None = None) -> int:
             vkey_dir=args.vkey_dir,
             proof_path=args.proof_file,
             aihoots_audit_path=args.aihoots_audit,
-            checkpoint_path=args.chain_checkpoint,
+            checkpoint_path=checkpoint_path,
+            anchor_ca_path=None if args.no_anchor_ca else args.anchor_ca_file,
             bb_version_pin=args.bb_version,
             signing_key=signing_key,
             provenance=args.provenance,
         )
         shutil.rmtree(staging, ignore_errors=True)
+        if checkpoint_tmp is not None:
+            checkpoint_tmp.unlink(missing_ok=True)
     except (BuildError, ExportError, OSError, ValueError) as exc:
         print(f"build_bundle: {exc}", file=sys.stderr)
         return 1

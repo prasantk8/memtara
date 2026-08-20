@@ -1330,7 +1330,21 @@ def test_the_checkpoint_slot_is_reserved_and_the_gap_is_stated(tmp_path):
 
 
 def test_a_checkpoint_file_is_not_credited_by_a_verifier_that_cannot_check_it(tmp_path):
-    """Presence is not verification. An old verifier must not pass a new file."""
+    """Presence is not verification. A file that merely LOOKS like a checkpoint
+    must not pass.
+
+    This test predates the anchoring stage: step 7c used to be a stub that
+    could not check ANY checkpoint file, so a well-formed-looking-but-fake one
+    was reported NOT RUN — "this verifier does not yet know how to check it".
+    Now that step 7c is a real check (audit/anchor.rs, this module's own
+    `rfc3161.py`), the honest report for a fake checkpoint is FAIL, not
+    NOT RUN: the verifier DOES know how to check it, tried, and the file
+    failed — `{"seq": 4131, ...}` has no `jws` at all. Leaving the old
+    assertion in place after the check landed would be exactly the "test
+    passes while lying" trap the stage plan warns about — a green run
+    claiming this verifier still cannot tell a real checkpoint from a fake
+    one, when it now can.
+    """
     bundle = make_bundle(tmp_path)
     checkpoint = bundle / "audit_chain_checkpoint.json"
     checkpoint.write_text(json.dumps({"seq": 4131, "signature": "not checked by this version"}))
@@ -1349,9 +1363,10 @@ def test_a_checkpoint_file_is_not_credited_by_a_verifier_that_cannot_check_it(tm
 
     report = run(bundle)
     step_7c = next(f for f in report.findings if f["step"] == "7c")
-    assert step_7c["status"] == verifier.NOT_RUN
-    assert "does not yet know how to check it" in "\n".join(step_7c["detail"])
-    assert report.integrity_verdict == verifier.INTEGRITY_INCOMPLETE
+    assert step_7c["status"] == verifier.FAIL
+    assert "not a compact JWS" in "\n".join(step_7c["detail"])
+    assert step_7c["bears_on_integrity"] is True
+    assert report.integrity_verdict == verifier.INTEGRITY_INVALID
 
 
 def test_provenance_is_carried_and_printed_before_any_pass(tmp_path):

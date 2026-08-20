@@ -684,6 +684,8 @@ mod tests {
                     10,
                     std::time::Duration::from_secs(60),
                 )),
+                anchor_provider: std::sync::Arc::new(crate::audit::anchor::LoggingAnchorProvider::new()),
+                anchor_policy: std::sync::Arc::new(crate::audit::anchor::AnchorPolicy::default()),
             };
 
             // Matching org's real API key: allowed.

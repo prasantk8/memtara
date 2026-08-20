@@ -2,6 +2,7 @@
 // extractor. Extend this struct as new modules need shared resources —
 // don't build parallel ad-hoc state.
 
+use crate::audit::anchor::{AnchorPolicy, AnchorProvider};
 use crate::auth::otp::OtpProvider;
 use crate::auth::uae_pass::UaePassProvider;
 use crate::auth::webauthn::WebauthnCeremonies;
@@ -40,4 +41,14 @@ pub struct AppState {
     /// Bounds `bb verify` invocations per user. Process-local by design —
     /// see ops/rate_limit.rs for what that does and does not cover.
     pub rate_limiter: Arc<RateLimiter>,
+    /// External witness for audit checkpoints (audit/anchor.rs). The real
+    /// RFC 3161 implementation in production; `LoggingAnchorProvider` (which
+    /// witnesses nothing — see its doc comment) in tests only.
+    pub anchor_provider: Arc<dyn AnchorProvider>,
+    /// How often the anchoring sweep runs and how it decides a checkpoint is
+    /// overdue. Read once at boot like `anchor::AnchorPolicy` itself
+    /// documents; carried on `AppState` (unlike `checkpoint::CheckpointPolicy`)
+    /// because HTTP handlers need it too, to classify anchor state on read —
+    /// not only the background loop.
+    pub anchor_policy: Arc<AnchorPolicy>,
 }

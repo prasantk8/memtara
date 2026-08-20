@@ -37,6 +37,13 @@ base64 = "0.22"
 # site, which is the part a regulator's reviewer actually needs to check.
 ed25519-dalek = "2"
 
+# The audit checkpoint's external witness (audit/anchor.rs) is this
+# codebase's first outbound HTTP call to a service it does not operate — an
+# RFC 3161 timestamp authority. rustls, not the platform TLS stack, to match
+# sqlx's `tls-rustls` feature above: one TLS backend compiled into this
+# binary rather than two.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
 anyhow = "1.0"
 thiserror = "1.0"
 

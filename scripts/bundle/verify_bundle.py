@@ -34,6 +34,8 @@ carry enough to be checked, and the reasons are printed.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import shutil
 import socket
@@ -62,6 +64,7 @@ try:  # pragma: no cover - exercised by whichever layout is in use
         verdict_words,
     )
     from scripts.bundle.jwks import verify_jwt_against_snapshot
+    from scripts.bundle.rfc3161 import verify_token as verify_rfc3161_token
     from scripts.bundle.structure import unsupported_keywords, validate
 except ImportError:  # pragma: no cover - the in-bundle layout
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -81,6 +84,7 @@ except ImportError:  # pragma: no cover - the in-bundle layout
         verdict_words,
     )
     from jwks import verify_jwt_against_snapshot  # type: ignore[no-redef]
+    from rfc3161 import verify_token as verify_rfc3161_token  # type: ignore[no-redef]
     from structure import unsupported_keywords, validate  # type: ignore[no-redef]
 
 PASS, FAIL, NOT_RUN, INFO = "PASS", "FAIL", "NOT RUN", "INFO"
@@ -92,6 +96,11 @@ INTEGRITY_INCOMPLETE = "INCOMPLETE"
 MANIFEST_FILENAME = "MANIFEST.json"
 MANIFEST_SIGNATURE_FILENAME = "MANIFEST.json.sig"
 CHECKPOINT_FILENAME = "audit_chain_checkpoint.json"
+# The pinned TSA trust anchor step 7c verifies an anchor receipt's embedded
+# certificate chain against. Fixed here and in build_bundle.py — see
+# rfc3161.py's header for why this must be a pinned copy, not whatever chain
+# the receipt itself carries.
+ANCHOR_CA_FILENAME = "tsa_ca_chain.pem"
 
 # Files that cannot appear in the manifest's own file list: the manifest
 # cannot hash itself, and a signature over the manifest is written after it.
@@ -607,21 +616,44 @@ def step_7_audit_chains(bundle: Path, pack: dict | None, report: Report) -> None
     step_7e_model_agreement(pack, events, report)
 
 
+def _b64url_decode(segment: str) -> bytes:
+    return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+
+
 def step_7c_chain_checkpoint(bundle: Path, report: Report) -> None:
-    """The signed chain-head checkpoint. RESERVED — no deployment emits one yet.
+    """The signed chain-head checkpoint, AND — new in this revision — its
+    external witness. Two sub-questions, reported as one finding because they
+    share a subject (this one checkpoint) but graded independently:
 
-    Reported as INFO rather than NOT RUN while it is absent, on purpose. NOT
-    RUN feeds the INCOMPLETE verdict, and a check that no bundle in existence
-    can satisfy would make every bundle INCOMPLETE forever — which would train
-    readers to ignore the word, and hide the NOT RUNs that are genuinely about
-    this pack. The gap is instead stated in full here and in step 7's text.
+      1. Is the checkpoint itself genuine: does its JWS verify against the
+         pinned key set, do the indexed fields (`head_seq`, `head_event_hash`,
+         `covered_row_count`, `prev_checkpoint_hash`) agree with what is
+         actually signed, and does it commit to a position at or after the
+         newest event in `audit_chain_segment.jsonl`? This is the check that
+         was a stub before this revision.
+      2. Has that checkpoint been witnessed OUTSIDE this organisation — an
+         RFC 3161 timestamp, cryptographically verified against a PINNED CA
+         (`tsa_ca_chain.pem`), not merely against whatever chain the receipt
+         embeds. See `rfc3161.py`'s header for the full argument.
 
-    When the checkpoint lands, the only change needed is that the branch below
-    stops being a stub: parse it, check its signature against the pinned key
-    set, and confirm it commits to a position at or after the newest event in
-    audit_chain_segment.jsonl. It becomes integrity-bearing at that point.
+    WHAT AN "anchored" RESULT PROVES: this checkpoint's signed bytes — and
+    therefore the chain head they pin — existed no later than the witness's
+    stated time, attested by a party whose signature this organisation's own
+    key cannot produce. WHAT IT DOES NOT PROVE: anything about rows BETWEEN
+    checkpoints or between anchors (that residual is `step_7`'s and
+    `checkpoint.rs`'s, restated in `docs/VERIFY.md`), and nothing about
+    whether the head is otherwise CORRECT — an anchor witnesses a
+    fingerprint, not a decision.
+
+    Absence of the checkpoint file entirely is still reported as INFO, not
+    NOT RUN — see the reasoning below, unchanged from before this revision.
+    Once a checkpoint IS present, every other outcome here is integrity-
+    bearing: a checkpoint that fails its own signature/column check, or an
+    anchor receipt that fails cryptographic verification, is FAIL, not a
+    softer status — both are signed contradictions, the same category step 7
+    treats a chain-linkage break as.
     """
-    title = "The signed chain-head checkpoint"
+    title = "The signed chain-head checkpoint, and its external witness"
     path = bundle / CHECKPOINT_FILENAME
 
     if not path.exists():
@@ -630,43 +662,211 @@ def step_7c_chain_checkpoint(bundle: Path, report: Report) -> None:
             title,
             INFO,
             [
-                f"{CHECKPOINT_FILENAME} is not in this bundle. This builder does not fetch one "
-                "yet — which is a statement about this bundle, NOT about the deployment: "
-                "audit/checkpoint.rs signs them and GET /orgs/:id/audit-chain/checkpoint serves "
-                "them. Ask the firm for the checkpoint covering the newest event below.",
+                f"{CHECKPOINT_FILENAME} is not in this bundle. This is a statement about THIS "
+                "bundle, not about the deployment: audit/checkpoint.rs signs checkpoints and "
+                "serves them at GET /audit/checkpoints/latest and "
+                "GET /audit/checkpoints/covering/:seq, unauthenticated. Ask the firm for the "
+                "checkpoint covering the newest event below, or rebuild with "
+                "scripts/bundle/build_bundle.py against a live server, which fetches one "
+                "automatically.",
                 "WHAT IS THEREFORE UNPROTECTED HERE: the newest event in "
                 "audit_chain_segment.jsonl. A chain protects a record by having a later record "
                 "commit to it, and the last record has no later record. Memtara's log also "
                 "stores no payload column, so that row cannot be recomputed from its own "
                 "contents either.",
-                "WHAT A CHECKPOINT ADDS: a signed statement, published independently of any "
-                "single bundle, that the chain head was at a named position with a named hash "
-                "at a named time, over a named row count — the count being what makes "
-                "truncation detectable as well as alteration. It does NOT close the gap in the "
-                "other direction: a checkpoint cannot show that an event which was never "
-                "written should have been, and it is necessarily made AFTER the events it "
-                "pins, so the newest rows are covered by neither mechanism until the next one "
-                "is signed. That window is the checkpointing interval; VERIFY.md step 7 names "
-                "the defaults and tells you to ask for this deployment's.",
+                "WHAT A CHECKPOINT ADDS, AND AN ANCHOR ADDS BEYOND THAT: a checkpoint is a "
+                "signed statement, published independently of any single bundle, that the "
+                "chain head was at a named position with a named hash at a named time, over a "
+                "named row count. An external anchor (RFC 3161, when present) additionally "
+                "pins that statement to a witness outside this organisation. Neither closes "
+                "the gap in the other direction — nothing here can show that an event which "
+                "was never written should have been — and a checkpoint is necessarily made "
+                "AFTER the events it pins, so the newest rows are covered by neither mechanism "
+                "until the next one runs. VERIFY.md step 7 names the defaults.",
             ],
             integrity=False,
         )
         return
 
-    # Deliberately conservative: a file exists under the reserved name but no
-    # verifier for it has been written. Saying so is the only honest reading —
-    # PASS would credit a check nobody has implemented.
-    report.add(
-        "7c",
-        title,
-        NOT_RUN,
-        [
-            f"{CHECKPOINT_FILENAME} is present ({sha256_hex(path.read_bytes())[:16]}…), but "
-            "this verifier does not yet know how to check it. Its format was reserved before "
-            "it existed. Upgrade to a verifier that implements step 7c rather than reading "
-            "this file's presence as evidence of anything.",
-        ],
-    )
+    try:
+        checkpoint = _load_json(path)
+    except ValueError as exc:
+        report.add("7c", title, FAIL, [f"{CHECKPOINT_FILENAME} is not valid JSON: {exc}"])
+        return
+    if not isinstance(checkpoint, dict):
+        report.add("7c", title, FAIL, [f"{CHECKPOINT_FILENAME} is not a JSON object"])
+        return
+
+    detail: list[str] = []
+    status = PASS
+
+    # --- the checkpoint itself ---------------------------------------------
+    jws = checkpoint.get("jws", "")
+    parts = jws.split(".")
+    if len(parts) != 3:
+        report.add("7c", title, FAIL, [f"'jws' is not a compact JWS ({len(parts)} segments)"])
+        return
+
+    snapshot_path = bundle / "jwks_snapshot.json"
+    if not snapshot_path.exists():
+        report.add(
+            "7c",
+            title,
+            NOT_RUN,
+            [
+                f"{CHECKPOINT_FILENAME} is present but there is no jwks_snapshot.json to check "
+                "its signature against — see step 8's identical situation for the proof token."
+            ],
+        )
+        return
+    try:
+        snapshot = _load_json(snapshot_path)
+    except ValueError as exc:
+        report.add("7c", title, FAIL, [f"jwks_snapshot.json is not valid JSON: {exc}"])
+        return
+
+    sig_finding = verify_jwt_against_snapshot(jws, snapshot)
+    detail.append(f"checkpoint kid {sig_finding.get('kid')}, thumbprint {sig_finding.get('thumbprint_rfc7638')}")
+    if sig_finding.get("signature_valid") is not True:
+        status = FAIL
+        detail.append(f"checkpoint JWS signature INVALID: {sig_finding.get('reason')}")
+        report.add("7c", title, status, detail)
+        return
+    detail.append("checkpoint JWS signature verifies against the pinned key set.")
+
+    try:
+        header = json.loads(_b64url_decode(parts[0]))
+        claims = json.loads(_b64url_decode(parts[1]))
+    except (ValueError, TypeError) as exc:
+        report.add("7c", title, FAIL, [f"checkpoint JWS could not be decoded: {exc}"])
+        return
+
+    # Domain separation, checked here too and not only server-side: the same
+    # issuer key also signs proof tokens (`typ: "JWT"`), and RFC 8725 §3.11
+    # exists precisely so a relying party is never handed one where it
+    # expects the other.
+    if header.get("typ") != "memtara-audit-checkpoint+jwt":
+        status = FAIL
+        detail.append(f"JWS typ is {header.get('typ')!r}, not a checkpoint — refusing to read it as one")
+        report.add("7c", title, status, detail)
+        return
+
+    # The indexed fields are an INDEX over the signed bytes (migrations/0008
+    # says so explicitly); anyone who edited a column and left `jws` alone
+    # is caught here, the same property `checkpoint::verify` checks
+    # server-side — recomputed independently here rather than trusted from
+    # the server's own report of itself.
+    indexed = {
+        "checkpoint_no": checkpoint.get("checkpoint_no"),
+        "head_seq": checkpoint.get("head_seq"),
+        "head_event_hash": checkpoint.get("head_event_hash"),
+        "covered_row_count": checkpoint.get("covered_row_count"),
+        "prev_checkpoint_hash": checkpoint.get("prev_checkpoint_hash"),
+    }
+    for field_name, indexed_value in indexed.items():
+        if claims.get(field_name) != indexed_value:
+            status = FAIL
+            detail.append(
+                f"'{field_name}' in the response ({indexed_value!r}) disagrees with the signed "
+                f"claim ({claims.get(field_name)!r}) — the column was edited and the signature "
+                "left alone"
+            )
+    if status == FAIL:
+        report.add("7c", title, status, detail)
+        return
+    detail.append("head_seq, head_event_hash, covered_row_count and prev_checkpoint_hash all agree with the signed claims.")
+
+    # Commits to a position at or after the newest event in the segment —
+    # the promise this step's stub named before it could keep it.
+    segment_path = bundle / "audit_chain_segment.jsonl"
+    if segment_path.exists():
+        newest_seq = None
+        for line in segment_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            seq = event.get("seq")
+            if isinstance(seq, int) and (newest_seq is None or seq > newest_seq):
+                newest_seq = seq
+        head_seq = checkpoint.get("head_seq")
+        if newest_seq is not None and isinstance(head_seq, int):
+            if head_seq >= newest_seq:
+                detail.append(f"checkpoint head_seq {head_seq} covers the segment's newest event (seq {newest_seq}).")
+            else:
+                status = FAIL
+                detail.append(
+                    f"checkpoint head_seq {head_seq} is BEFORE the segment's newest event (seq "
+                    f"{newest_seq}) — this checkpoint does not cover the decision this bundle is about"
+                )
+
+    # --- the external witness -----------------------------------------------
+    anchor = checkpoint.get("external_anchor") or {}
+    anchor_status = anchor.get("status")
+    if anchor_status == "anchored":
+        ca_path = bundle / ANCHOR_CA_FILENAME
+        receipt_b64 = anchor.get("receipt_der_base64")
+        if not ca_path.exists():
+            detail.append(
+                f"anchored, but {ANCHOR_CA_FILENAME} is absent from this bundle — the receipt "
+                "cannot be checked against a pinned trust anchor here. NOT the same as an "
+                "invalid receipt: rebuild with the CA file to check it."
+            )
+        elif not receipt_b64:
+            status = FAIL
+            detail.append("external_anchor.status is 'anchored' but no receipt_der_base64 is present — malformed")
+        else:
+            try:
+                token_der = base64.b64decode(receipt_b64)
+                jws_bytes = jws.encode("ascii")
+                expected_digest = hashlib.sha256(jws_bytes).digest()
+                rfc3161_finding = verify_rfc3161_token(
+                    token_der,
+                    expected_digest=expected_digest,
+                    expected_digest_algorithm="sha256",
+                    pinned_ca_pem=ca_path.read_bytes(),
+                )
+            except Exception as exc:  # noqa: BLE001 - any parse failure is a finding, not a crash
+                status = FAIL
+                detail.append(f"anchor receipt could not even be parsed: {exc}")
+            else:
+                if rfc3161_finding.dependency_missing:
+                    detail.append(f"anchor receipt present but not checked: {rfc3161_finding.reason}")
+                elif rfc3161_finding.ok:
+                    detail.append(
+                        f"EXTERNAL WITNESS VERIFIED: RFC 3161 token from {rfc3161_finding.tsa_name}, "
+                        f"timestamped {rfc3161_finding.gen_time}, signature and certificate chain "
+                        f"verify against the PINNED trust anchor in {ANCHOR_CA_FILENAME}. This "
+                        "checkpoint — and therefore the chain head it pins — provably existed by "
+                        "that time, witnessed outside this organisation. It proves nothing about "
+                        "whether the head is otherwise correct, and nothing about rows appended "
+                        "since (see step 7's text)."
+                    )
+                else:
+                    status = FAIL
+                    detail.append(f"EXTERNAL WITNESS DOES NOT VERIFY: {rfc3161_finding.reason}")
+    elif anchor_status == "pending":
+        age = anchor.get("age_seconds")
+        detail.append(
+            f"not yet anchored ({age}s since signing) — still inside the anchoring sweep's own "
+            "interval. Not a finding by itself; if this bundle is being relied on RIGHT NOW, ask "
+            "the firm to run POST /audit/anchors/sweep and rebuild."
+        )
+    elif anchor_status == "overdue":
+        note = anchor.get("note", "")
+        detail.append(
+            f"OVERDUE — this checkpoint has gone unanchored longer than the deployment's own "
+            f"sweep interval. {note} This is an operational finding about the DEPLOYMENT (the "
+            "anchoring job may be stuck or the TSA unreachable), not evidence that THIS bundle "
+            "was tampered with — reported plainly rather than folded into a generic status."
+        )
+    else:
+        detail.append(f"external_anchor.status is {anchor_status!r} — not one of anchored/pending/overdue, unrecognised")
+
+    report.add("7c", title, status, detail)
 
 
 def step_7b_aihoots(bundle: Path, report: Report) -> None:

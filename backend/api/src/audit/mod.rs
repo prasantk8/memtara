@@ -70,6 +70,13 @@ use crate::state::AppState;
 // every record tamper-evident.
 pub mod checkpoint;
 
+// The external witness over a checkpoint's head — see that module's header
+// for what it adds beyond `checkpoint.rs` alone (a signature this
+// deployment cannot itself produce) and what it still does not cover (rows
+// between anchors, the same residual `checkpoint.rs` states one level
+// down).
+pub mod anchor;
+
 // Binding events, and the verifier that replays them. Together these change
 // what a passing chain check means: `mod.rs` proves the rows are linked to
 // each other and none was removed, `binding.rs` + `replay.rs` prove the rows
@@ -85,6 +92,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/orgs/:id/audit-log", get(get_org_audit_log))
         .merge(checkpoint::router())
+        .merge(anchor::router())
         .merge(replay::router())
 }
 

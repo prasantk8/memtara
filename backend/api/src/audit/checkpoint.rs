@@ -202,6 +202,11 @@ pub struct StoredCheckpoint {
     pub anchor_target: Option<String>,
     pub anchor_ref: Option<String>,
     pub anchored_at: Option<DateTime<Utc>>,
+    /// The external witness's raw bytes (migrations/0012) — DER for the
+    /// RFC 3161 case. `None` alongside null `anchor_target`/`anchor_ref`/
+    /// `anchored_at` (the database enforces that these four are always all
+    /// null or all present, migrations/0012's `audit_checkpoints_anchor_complete`).
+    pub anchor_receipt: Option<Vec<u8>>,
 }
 
 /// What the database says right now about the range a checkpoint covers.
@@ -523,6 +528,7 @@ pub async fn emit_in_tx(
         anchor_target: None,
         anchor_ref: None,
         anchored_at: None,
+        anchor_receipt: None,
     }))
 }
 
@@ -552,7 +558,7 @@ pub async fn latest(conn: &mut PgConnection) -> ApiResult<Option<StoredCheckpoin
         r#"
         select checkpoint_no as "checkpoint_no!", head_seq, head_event_hash, covered_row_count,
                prev_checkpoint_hash, checkpoint_hash, signed_jws, kid, signed_at,
-               anchor_target, anchor_ref, anchored_at
+               anchor_target, anchor_ref, anchored_at, anchor_receipt
           from audit_checkpoints
          order by checkpoint_no desc
          limit 1
@@ -578,7 +584,7 @@ pub async fn covering(conn: &mut PgConnection, seq: i64) -> ApiResult<Option<Sto
         r#"
         select checkpoint_no as "checkpoint_no!", head_seq, head_event_hash, covered_row_count,
                prev_checkpoint_hash, checkpoint_hash, signed_jws, kid, signed_at,
-               anchor_target, anchor_ref, anchored_at
+               anchor_target, anchor_ref, anchored_at, anchor_receipt
           from audit_checkpoints
          where head_seq >= $1
          order by head_seq asc
@@ -837,11 +843,23 @@ pub fn router() -> Router<AppState> {
         .route("/audit/checkpoints", post(post_checkpoint))
 }
 
+/// `external_anchor`'s shape: always present now (B2's "distinguish three
+/// cases" instruction), unlike the `Option<AnchorResponse>` this replaced —
+/// "not yet anchored" and "no such field" used to be the same wire shape,
+/// and a consumer had to remember which. `#[serde(flatten)]` keeps
+/// `anchor::AnchorState`'s own `status` tag at this level; `receipt_der_base64`
+/// is bolted on beside it rather than folded into `anchor::AnchorState`
+/// itself, because that type is also the pure, DB-free unit tested by
+/// `anchor::classify` and has no business carrying HTTP encoding concerns.
 #[derive(Serialize)]
-struct AnchorResponse {
-    target: String,
-    reference: String,
-    anchored_at: DateTime<Utc>,
+struct ExternalAnchorResponse {
+    #[serde(flatten)]
+    state: super::anchor::AnchorState,
+    /// Base64 (standard) of the raw witness bytes — present only when
+    /// `state` is `Anchored`. An offline verifier needs these bytes (see
+    /// migrations/0012's header); everyone else can ignore the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt_der_base64: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -863,14 +881,28 @@ struct CheckpointResponse {
     /// a consumer never has to be told out of band, and so the checkpoint is
     /// self-describing when it is pasted into a ticket six months from now.
     jwks_url: String,
-    /// Null on every checkpoint today. Non-null would mean an external
-    /// witness holds a copy — see migrations/0008. Present in the response
-    /// precisely so that its being null is visible rather than implied.
-    external_anchor: Option<AnchorResponse>,
+    /// One of `anchored` / `pending` / `overdue` — see `anchor::AnchorState`.
+    /// Always present: even "not yet anchored" is a reportable fact, not an
+    /// absence.
+    external_anchor: ExternalAnchorResponse,
 }
 
 impl CheckpointResponse {
-    fn build(cp: &StoredCheckpoint, issuer: &str) -> Self {
+    fn build(cp: &StoredCheckpoint, issuer: &str, anchor_policy: &super::anchor::AnchorPolicy) -> Self {
+        let state = super::anchor::classify(
+            cp.signed_at,
+            cp.anchor_target.as_deref(),
+            cp.anchor_ref.as_deref(),
+            cp.anchored_at,
+            anchor_policy,
+            Utc::now(),
+        );
+        let receipt_der_base64 = match &state {
+            super::anchor::AnchorState::Anchored { .. } => {
+                cp.anchor_receipt.as_deref().map(super::anchor::encode_receipt)
+            }
+            _ => None,
+        };
         Self {
             checkpoint_no: cp.checkpoint_no,
             head_seq: cp.head_seq,
@@ -884,14 +916,7 @@ impl CheckpointResponse {
             jws: cp.signed_jws.clone(),
             typ: CHECKPOINT_TYP,
             jwks_url: format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/')),
-            external_anchor: match (&cp.anchor_target, &cp.anchor_ref, cp.anchored_at) {
-                (Some(target), Some(reference), Some(anchored_at)) => Some(AnchorResponse {
-                    target: target.clone(),
-                    reference: reference.clone(),
-                    anchored_at,
-                }),
-                _ => None,
-            },
+            external_anchor: ExternalAnchorResponse { state, receipt_der_base64 },
         }
     }
 }
@@ -902,7 +927,7 @@ async fn get_latest_checkpoint(State(state): State<AppState>) -> ApiResult<Json<
     let cp = latest(&mut conn)
         .await?
         .ok_or_else(|| ApiError::NotFoundDetail("no audit checkpoint has been taken yet".into()))?;
-    Ok(Json(CheckpointResponse::build(&cp, state.signer.issuer())))
+    Ok(Json(CheckpointResponse::build(&cp, state.signer.issuer(), &state.anchor_policy)))
 }
 
 #[derive(Serialize)]
@@ -942,7 +967,7 @@ async fn get_checkpoint_covering(
                 cp.head_seq,
                 state.signer.issuer().trim_end_matches('/'),
             ),
-            checkpoint: Some(CheckpointResponse::build(&cp, state.signer.issuer())),
+            checkpoint: Some(CheckpointResponse::build(&cp, state.signer.issuer(), &state.anchor_policy)),
         })),
         None => {
             let head = latest(&mut conn).await?.map(|c| c.head_seq);
@@ -980,6 +1005,14 @@ struct IntegrityResponse {
     /// from two other endpoints.
     uncovered_rows: i64,
     note: String,
+    /// The latest checkpoint's external-witness state — `None` only when
+    /// there is no checkpoint at all yet (the branch above, where
+    /// `checkpoint` is also `None`). Surfaced here too, not only on the
+    /// checkpoint endpoints, because "is our evidence intact" and "is our
+    /// evidence witnessed outside this organisation" are the two questions
+    /// this endpoint's callers actually have, and an `overdue` anchor here
+    /// is exactly the finding B2 requires reporting plainly.
+    anchor: Option<super::anchor::AnchorState>,
 }
 
 /// `GET /audit/integrity` — verify the newest checkpoint against the log as
@@ -999,6 +1032,7 @@ async fn get_audit_integrity(
             note: "no audit checkpoint has been taken on this deployment, so the terminal row of \
                    the audit chain is not committed to by anything outside the chain."
                 .into(),
+            anchor: None,
         }));
     };
 
@@ -1028,11 +1062,21 @@ async fn get_audit_integrity(
         )
     };
 
+    let anchor = super::anchor::classify(
+        cp.signed_at,
+        cp.anchor_target.as_deref(),
+        cp.anchor_ref.as_deref(),
+        cp.anchored_at,
+        &state.anchor_policy,
+        Utc::now(),
+    );
+
     Ok(Json(IntegrityResponse {
         intact: verification.intact && head_seq.is_some(),
         checkpoint: Some(verification),
         uncovered_rows: uncovered,
         note,
+        anchor: Some(anchor),
     }))
 }
 
@@ -1066,7 +1110,7 @@ async fn post_checkpoint(
                 "checkpoint {} signed over audit_log seq {} ({} rows covered).",
                 cp.checkpoint_no, cp.head_seq, cp.covered_row_count
             ),
-            checkpoint: Some(CheckpointResponse::build(&cp, state.signer.issuer())),
+            checkpoint: Some(CheckpointResponse::build(&cp, state.signer.issuer(), &state.anchor_policy)),
             emitted: true,
         })),
         Err(NotEmitted::EmptyChain) => Ok(Json(EmitResponse {
@@ -1087,7 +1131,9 @@ async fn post_checkpoint(
                     ),
                     None => "nothing to checkpoint.".into(),
                 },
-                checkpoint: cp.as_ref().map(|c| CheckpointResponse::build(c, state.signer.issuer())),
+                checkpoint: cp
+                    .as_ref()
+                    .map(|c| CheckpointResponse::build(c, state.signer.issuer(), &state.anchor_policy)),
             }))
         }
     }

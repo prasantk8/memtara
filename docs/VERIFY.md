@@ -20,7 +20,11 @@ tool installed (see below) and takes a few seconds once it is.
 You need:
 
 - A computer with **Python 3.9 or later**. Type `python3 --version` to check.
-- For step 8 only: the `cryptography` package (`python3 -m pip install cryptography`).
+- For step 8 always, and step 7c when the checkpoint carries an anchor: the
+  `cryptography` package (`python3 -m pip install cryptography`).
+- For step 7c only, and only when the checkpoint carries an anchor: the
+  `asn1crypto` package (`python3 -m pip install asn1crypto`) — pure Python,
+  no compiler needed.
 - For step 5 only: `bb`, an open-source tool published by Aztec, not by
   Memtara. The exact version to install is written in `MANIFEST.json` under
   `pinned_dependencies.bb`. Steps 1-4 and 6-9 do not need it.
@@ -53,7 +57,8 @@ result means, which the script cannot decide for you.
 | `audit_binding_events.jsonl` | The entries that commit to the **contents** of the rows this decision is judged on — the model that was declared, and the policy it was measured against — each with the details it fingerprinted. This is the only file in the bundle whose fingerprints you can recompute yourself. See step 7d. |
 | `institution_and_thresholds.json` | Who the firm is, and the thresholds this assessment was measured against. |
 | `aihoots_audit_chain.jsonl` | The relying party's own independent log, if one was supplied. |
-| `audit_chain_checkpoint.json` | A signed commitment to where the log had got to. Reserved — see step 7c; no bundle carries one yet. |
+| `audit_chain_checkpoint.json` | A signed commitment to where the log had got to, and — when anchored — an external witness's receipt over it. See step 7c. Absent from a bundle built without one; `build_bundle.py` fetches one automatically from a live server. |
+| `tsa_ca_chain.pem` | The pinned trust anchor step 7c checks an anchor receipt's certificate chain against. See step 7c for why this must be a pinned copy rather than whatever chain the receipt itself carries. |
 | `jwks_snapshot.json` | The issuer's public keys, captured at the time the evidence was issued. |
 | `case_file.pdf` + `.seal.json` | The readable version, and a fingerprint over it. |
 | `tools/` | This procedure as a script, and the relying party's own log checker. |
@@ -278,14 +283,15 @@ unprotected.
 Note what a checkpoint still does not do: it cannot show that an event which
 was **never written** should have been.
 
-**What this bundle carries.** The reserved filename is
-`audit_chain_checkpoint.json` and step 7c is where it is reported. Today the
-builder does not yet fetch one, so step 7c reports its absence and the
-consequence rather than staying silent about it. Do not read step 7c's INFO
-status as a statement that no checkpoint exists for this log — it means this
-bundle does not carry one. If the terminal event in
-`audit_chain_segment.jsonl` matters to your conclusion, ask the firm for the
-checkpoint that covers it (`GET /orgs/:id/audit-chain/checkpoint`) and check
+**What this bundle carries.** The filename is `audit_chain_checkpoint.json`
+and step 7c is where it is checked. `build_bundle.py` fetches one
+automatically from `GET /audit/checkpoints/covering/:seq` when it is run
+against a live server; a bundle assembled from a saved evidence file may not
+carry one. Do not read step 7c's INFO status as a statement that no
+checkpoint exists for this log — it means this bundle does not carry one. If
+the terminal event in `audit_chain_segment.jsonl` matters to your conclusion,
+ask the firm for the checkpoint that covers it
+(`GET /audit/checkpoints/covering/<seq>`, no credential required) and check
 it against the issuer key you already have from step 8.
 
 **On Memtara's own segment, be careful what you conclude.** Two limitations,
@@ -304,6 +310,86 @@ Anyone who tells you this segment independently proves what happened is
 overstating it. What it does prove, if you later obtain the full log from the
 firm, is *where* these events sat in history — which is enough to catch an
 event that was inserted or reordered afterwards.
+
+---
+
+## Step 7c — The checkpoint itself, and its external witness
+
+Two checks under one step, because they share a subject — one specific
+checkpoint — but answer different questions.
+
+**First: is the checkpoint genuine?** The script verifies `jws` in
+`audit_chain_checkpoint.json` against the pinned key set (the same
+`jwks_snapshot.json` step 8 uses), confirms every field alongside it
+(`head_seq`, `head_event_hash`, `covered_row_count`, `prev_checkpoint_hash`)
+agrees with what is actually inside the signed bytes — an edited column with
+the signature left alone is caught here, the same "columns are an index over
+the signed bytes" property `docs/BREAK_IT_FINDINGS.md` describes for the
+checkpoint table itself — and confirms `head_seq` covers the newest event in
+`audit_chain_segment.jsonl`. Any disagreement here is FAIL, not a softer
+status: it is a signed contradiction, the same category a broken chain link
+is treated as in step 7.
+
+**Second: has it been witnessed OUTSIDE this organisation?** A checkpoint by
+itself is a statement the deployment makes about itself — real
+tamper-evidence, but produced, stored and signed entirely inside one
+organisation's control. `external_anchor.status` in the checkpoint is one of
+three words, and each means something different:
+
+- **`anchored`** — an RFC 3161 timestamp authority was asked to witness this
+  checkpoint's signed bytes, and did. The script checks the receipt
+  cryptographically: parses it, confirms the digest it timestamped is this
+  exact checkpoint (not some other one), verifies the signature against the
+  certificate embedded in the receipt, and — the step that actually matters —
+  verifies that certificate's chain up to a certificate **byte-identical** to
+  `tsa_ca_chain.pem`, a copy of the timestamp authority's root certificate
+  pinned inside this bundle independently of the receipt. This last check is
+  not decorative: a forged receipt can embed ANY self-signed certificate it
+  likes and be internally consistent, so trusting whatever chain arrives
+  *with* the receipt would prove nothing. Only agreement with the
+  *independently obtained, pinned* copy is evidence.
+
+  **What a PASS here proves:** this checkpoint — and therefore the chain head
+  it pins — existed no later than the timestamp authority's stated time,
+  attested by a party whose signature this organisation's own signing key
+  cannot produce. An organisation holding its own database and its own
+  signing key can rewrite its history and re-sign a new, self-consistent
+  head; it cannot also reach back and get the *original* timestamp authority
+  to backdate a receipt for the *rewritten* head, because the rewritten
+  checkpoint's bytes — and therefore its digest — are different from what was
+  actually anchored.
+
+  **What it does NOT prove:** anything about the head being otherwise
+  *correct* (an anchor witnesses a fingerprint, not a decision), and nothing
+  about rows appended or rewritten *between* anchors — see the residual
+  below. Nor does it vouch for the timestamp authority's own trustworthiness;
+  see `MANIFEST.json`'s note on which TSA this deployment uses and its
+  single-point-of-trust caveat if it is the community-run development
+  default.
+
+- **`pending`** — not yet anchored, but still inside the anchoring job's own
+  sweep interval. Not a finding: anchoring is deliberately not inline with
+  checkpoint creation (a checkpoint must never fail because a timestamp
+  authority is briefly unreachable), so a checkpoint signed moments ago
+  legitimately has no receipt yet.
+
+- **`overdue`** — unanchored for LONGER than the sweep interval. This IS a
+  finding, about the deployment's operations rather than about this specific
+  bundle: the anchoring job may be stuck, or its timestamp authority may be
+  down. It does not mean the checkpoint or the bundle is compromised — ask
+  the firm why.
+
+**The residual, stated the same way the checkpointing interval is stated
+above, because it is the identical shape of honesty one level up.** An
+anchor covers exactly the checkpoint it was taken over, and — like a
+checkpoint over the log — is necessarily obtained *after* the checkpoint it
+witnesses. Rows created and rewritten entirely *inside* the combined window
+(checkpoint interval, then anchoring sweep interval, before either mechanism
+has run again) are still forgeable by an insider with database and signing-key
+access. What anchoring changes is the SIZE of that window: before it, the
+window was "all of history since the last time anyone independently checked".
+After it, the window is one anchoring cadence. That is a real, large
+narrowing, and it is not the same claim as "immutable".
 
 ---
 
