@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Memtara — prove suitability on this device</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    max-width: 42rem;
+    margin: 2rem auto;
+    padding: 0 1.25rem;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.4rem; }
+  .claim {
+    border: 1px solid #7a7a7a55;
+    border-radius: 0.5rem;
+    padding: 0.9rem 1.1rem;
+    margin: 1rem 0;
+    background: #80808012;
+  }
+  .claim ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+  label { display: block; font-weight: 600; margin-top: 1rem; }
+  input[type="file"], input[type="text"], input[type="password"] {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 0.3rem;
+    padding: 0.4rem;
+  }
+  button {
+    margin-top: 1.25rem;
+    padding: 0.6rem 1.2rem;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  #status { margin-top: 1rem; font-weight: 600; }
+  #status[data-kind="error"] { color: #b3261e; }
+  #status[data-kind="refused"] { color: #8a5a00; }
+  #status[data-kind="success"] { color: #1e6b1e; }
+  #result { margin-top: 1rem; }
+  pre { white-space: pre-wrap; word-break: break-all; background: #80808014; padding: 0.6rem; border-radius: 0.4rem; }
+  .footnote { font-size: 0.85rem; opacity: 0.75; margin-top: 2.5rem; }
+</style>
+</head>
+<body>
+<h1>Prove structured-product suitability, on this device</h1>
+
+<div class="claim">
+  <p><strong>What stays on this device, always:</strong></p>
+  <ul>
+    <li>Your income, liquid assets, risk tolerance and existing holdings — the four figures in your vault file.</li>
+    <li>Your signing key.</li>
+  </ul>
+  <p><strong>What this page sends to the bank, and nothing more:</strong></p>
+  <ul>
+    <li>A cryptographic proof that those figures clear the product's published thresholds.</li>
+    <li>One bit: <em>suitable</em> or <em>not suitable</em>.</li>
+    <li>The public terms of the assessment (the product, the thresholds, the time window) — the bank
+        already knows these; they are not secret.</li>
+  </ul>
+  <p>The proof is built and generated inside this browser tab. Your vault file is read from disk and
+     never uploaded; nothing about your finances is transmitted, logged, or stored by this page.</p>
+</div>
+
+<p class="footnote" style="margin-top:0.5rem">
+  This page's text is English only. It has not yet been translated for French- or Arabic-reading
+  clients — see <code>clients/web-prover/SPIKE.md</code> for why this stage stopped short of that and
+  what a translated version would need.
+</p>
+
+<label for="vault-file">Your vault file (never uploaded — read locally)</label>
+<input type="file" id="vault-file" accept="application/json" />
+
+<label for="request-file">The assessment request (from your bank)</label>
+<input type="file" id="request-file" accept="application/json" />
+
+<label for="base-url">Bank's Memtara server URL</label>
+<input type="text" id="base-url" value="http://127.0.0.1:8080" />
+
+<label for="session-token">Your session token</label>
+<input type="password" id="session-token" placeholder="issued when you signed in" />
+
+<button id="go" type="button">Generate proof and submit</button>
+
+<div id="status" role="status"></div>
+<div id="result"></div>
+
+<script type="module" src="./vendor/app.bundle.js"></script>
+</body>
+</html>

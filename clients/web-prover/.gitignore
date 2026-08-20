@@ -1,0 +1,10 @@
+# Bundled output of `npm run build` — a build artifact of src/, not source,
+# exactly like circuits/target/ and backend/api/vkeys/ elsewhere in this
+# repository. Regenerate with `node build.mjs` (see build.mjs's own header).
+/vendor/
+
+/node_modules/
+
+# Playwright's own run artifacts.
+/test-results/
+/playwright-report/

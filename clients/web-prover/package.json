@@ -1,0 +1,21 @@
+{
+  "name": "@memtara/web-prover",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Browser suitability prover — generates a real UltraHonk proof over circuits/wealth_suitability in the browser tab, so the vault never leaves the device.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test:e2e": "node build.mjs && playwright test test/e2e.spec.mjs"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "5.1.0",
+    "@noir-lang/noir_js": "1.0.0-beta.26"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "@playwright/test": "^1.62.1",
+    "playwright": "^1.62.1",
+    "pg": "^8.13.0"
+  }
+}
