@@ -229,7 +229,7 @@ jobs:
         run: node clients/auditor-console/check_fixtures.mjs
 
       - name: Break-it — adversarial suite against the real system
-        # Eleven attacks, no mocks in the attack path. Exits non-zero only on
+        # Twelve attacks, no mocks in the attack path. Exits non-zero only on
         # NOT STOPPED. A BLOCKED row is an honest report that the capability
         # under attack does not exist yet, and does not fail the build — but
         # the next step makes sure the blocked count cannot quietly grow.
