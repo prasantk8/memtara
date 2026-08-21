@@ -362,7 +362,7 @@ def locate_model_block(record: Any) -> tuple[str, Any]:
     Two shapes carry one, and the difference is a naming collision this repo
     already has rather than one introduced here:
 
-      * `DecisionEvidence` (schema/decision_evidence/v1.1.0.json, and the
+      * `DecisionEvidence` (schema/decision_evidence/v1.3.0.json, and the
         auditor console's fixtures) carries `model` at the top level, where
         `null` is the signed assertion that no AI participated.
       * The case-file pack in an offline bundle

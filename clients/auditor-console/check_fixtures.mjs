@@ -55,7 +55,8 @@ function stateOfCheck(report, id) {
 
 const results = {};
 
-for (const dir of ['approval', 'rejection', 'broken', 'no-ai', 'binding-altered', 'binding-record-mismatch']) {
+for (const dir of ['approval', 'rejection', 'broken', 'no-ai', 'binding-altered', 'binding-record-mismatch',
+  'consent-revocation-altered', 'checkpoint-anchored', 'checkpoint-overdue']) {
   const report = await AC.analyse(loadBundle(dir));
   results[dir] = report;
   console.log(`\n${dir}`);
@@ -173,6 +174,48 @@ assert('a bundle whose record was edited passes the recomputation and fails the 
 assert('the two binding checks are independent — neither fixture fails both',
   stateOfCheck(results['binding-altered'], 'binding_model') !== AC.STATES.FAIL &&
   stateOfCheck(results['binding-record-mismatch'], 'binding_recompute') !== AC.STATES.FAIL);
+
+// 7b. CONSENT REVOCATION, THE SAME MECHANISM AS THE MODEL SWAP. A revoked
+//     grant is not a tamper — but the stage plan's own residual is that a
+//     legitimate revocation makes the ORIGINAL grant-bound event's fingerprint
+//     disagree with the row as it stands now (the row's `revoked_at` legally
+//     changed after that event was written), while the revocation-bound event
+//     recorded in the SAME transaction as the revoke agrees. An examiner who
+//     reads only one of the pair, or only the word and not the detail, cannot
+//     tell a routine revocation from a tamper by that word alone — which is
+//     exactly why both events must be readable in the same bundle.
+assert('consent revocation is visible as a fingerprint disagreement, exactly like the model-swap case',
+  stateOfCheck(results['consent-revocation-altered'], 'binding_recompute') === AC.STATES.FAIL,
+  `state was ${stateOfCheck(results['consent-revocation-altered'], 'binding_recompute')}`);
+
+const consentDetail = results['consent-revocation-altered'].checks.find((c) => c.id === 'binding_recompute')?.detail || '';
+assert('the grant event and the revocation event disagree with each other, not just with a generic failure',
+  /consent_grant_bound\s+seq 10420\s+->\s+ALTERED/.test(consentDetail) &&
+  /consent_revocation_bound\s+seq 10421\s+->\s+INTACT/.test(consentDetail),
+  `detail did not show one ALTERED and one INTACT: ${consentDetail.slice(0, 200)}`);
+
+// 7c. EXTERNAL ANCHORING. `checkpoint_anchor` mirrors the server's own
+//     three-state classification (audit/anchor.rs::classify) rather than
+//     re-deriving it, and is deliberately NOT_CHECKED even in the anchored
+//     case — this console does not re-verify a JWS signature or an RFC 3161
+//     receipt; scripts/bundle/verify_bundle.py step 7c does. Overdue is the
+//     one state this tool reports as a finding (FAIL), because the stage
+//     plan is explicit that overdue is a finding and the reporting must say
+//     so.
+assert('an anchored checkpoint is reported, but not claimed as independently verified',
+  stateOfCheck(results['checkpoint-anchored'], 'checkpoint_anchor') === AC.STATES.NOT_CHECKED,
+  `state was ${stateOfCheck(results['checkpoint-anchored'], 'checkpoint_anchor')}`);
+
+assert('an overdue checkpoint is reported as a finding, not a quiet not-checked',
+  stateOfCheck(results['checkpoint-overdue'], 'checkpoint_anchor') === AC.STATES.FAIL,
+  `state was ${stateOfCheck(results['checkpoint-overdue'], 'checkpoint_anchor')}`);
+
+assert('anchored and overdue are visibly different states, not the same badge with different text',
+  stateOfCheck(results['checkpoint-anchored'], 'checkpoint_anchor') !== stateOfCheck(results['checkpoint-overdue'], 'checkpoint_anchor'));
+
+assert('a bundle with no checkpoint at all reports the anchor check unperformed, not passed',
+  stateOfCheck(results.approval, 'checkpoint_anchor') === AC.STATES.MISSING,
+  `state was ${stateOfCheck(results.approval, 'checkpoint_anchor')}`);
 
 // 8. AN ABSENT CHECK IS NOT A PASSED ONE. A bundle with no binding events must
 //    never render as though the binding held — that principle is load-bearing

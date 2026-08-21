@@ -237,10 +237,10 @@ def binding_envelope(
         MODEL_ATTESTATION_BOUND, request_id, FIXTURE_PREV_HASH, hash_over or payload
     )
     return {
-        "evidence_schema": "schema/decision_evidence/v1.2.0.json",
+        "evidence_schema": "schema/decision_evidence/v1.3.0.json",
         "canonical_evidence_sha256": "0" * 64,
         "decision_evidence": {
-            "evidence_schema_version": "1.2.0",
+            "evidence_schema_version": "1.3.0",
             "model": None if model is None else {k: provenanced(v) for k, v in model.items()},
             "model_provenance": {
                 "declared_at": provenanced("2026-09-16T08:54:58Z"),

@@ -49,6 +49,22 @@ tags:
       firm registered in advance.
   - name: Disclosure
     description: The org-initiated "please prove X to me" lifecycle.
+  - name: Consent
+    description: |
+      A revocable grant, recorded as a first-class fact — not the purpose
+      `SessionPolicy.purpose_hash` binds a session to, which has never said
+      anyone agreed to anything or that agreement was later withdrawn. Every
+      route here is org-authenticated: `granted_via` (`assisted_kiosk`,
+      `mobile_app`) says the grant was captured THROUGH an organisation's
+      channel, so the row is the organisation's assertion that a grant of
+      this shape happened, the same way `decision_reviews.reviewer_id` is.
+      See `backend/api/src/consents/mod.rs`.
+  - name: Audit trail
+    description: |
+      The hash-chained log, the signed checkpoints taken over its head, and
+      the external witness that closes the "we can still delete our own
+      history" gap a checkpoint alone leaves open. See
+      `backend/api/src/audit/checkpoint.rs` and `audit/anchor.rs`.
   - name: Verification
     description: Checking a submitted proof against a circuit's verification key.
   - name: Auth
@@ -264,6 +280,14 @@ paths:
             from the registry); or a `ttl_seconds` outside 60-86400.
           $ref: "#/components/responses/Error"
         "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          description: |
+            No **unrevoked** consent grant on file for this user covers the
+            purpose `wealth.suitability_recommendation`. The message names
+            either the absence (no grant at all) or the most recent grant
+            that covered it and when it was revoked. Grant one with
+            `POST /api/v1/consents` first — see the Consent tag.
           $ref: "#/components/responses/Error"
         "404":
           description: |
@@ -541,6 +565,294 @@ paths:
                 items: { $ref: "#/components/schemas/AuditEntry" }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+
+  /orgs/{id}/audit-log/replay:
+    get:
+      tags: [Organizations, Audit trail]
+      summary: Rebuild every binding event in this org's trail and report what it finds
+      description: |
+        The BINDING claim, org-wide: not "was any record removed or
+        reordered" (linkage — the plain audit-log endpoint above, and the
+        chain walk in the offline bundle), but "do the mutable rows a
+        decision was judged on still say what the chain hashed when it was
+        written". Only event types in `audit/binding.rs::BINDING_EVENT_TYPES`
+        are in scope; everything else is reported by type and count under
+        `summary.out_of_scope` rather than silently skipped, because a
+        verifier that reports "0 problems" while quietly excluding most of
+        its input is the failure mode this whole product argues against.
+
+        `GET /api/v1/wealth-assessments/{request_id}/decision-evidence`
+        calls the same underlying function scoped to one decision (plus its
+        model corrections and the consent grant it cites); this is the
+        org-wide view.
+      security: [{ orgApiKey: [] }]
+      parameters: [{ $ref: "#/components/parameters/OrgId" }]
+      responses:
+        "200":
+          description: The replay report.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReplayReport" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /audit/checkpoints/latest:
+    get:
+      tags: [Audit trail]
+      summary: The most recently signed checkpoint over the chain head
+      description: |
+        Unauthenticated, like `/.well-known/jwks.json` and for the same
+        reason: a checkpoint whose whole purpose is to be held by third
+        parties is not published if it needs an API key to read. The cost is
+        that total audit-event volume across all tenants (`head_seq`, a row
+        count) becomes public; no tenant and no event type is named.
+
+        `external_anchor` is always present, one of the three states in
+        `AnchorState` — even "not yet anchored" (`pending`) is a reportable
+        fact, not an absent field.
+      security: []
+      responses:
+        "200":
+          description: The checkpoint.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CheckpointResponse" }
+        "404":
+          description: No checkpoint has ever been taken on this deployment.
+          $ref: "#/components/responses/Error"
+
+  /audit/checkpoints/covering/{seq}:
+    get:
+      tags: [Audit trail]
+      summary: The earliest checkpoint that pins a given audit_log seq, if one exists
+      description: |
+        `200` with `covered: false` rather than `404` when nothing covers the
+        row yet — "there is no checkpoint over this row" is a true and useful
+        answer about a row that exists, and a customer asking this question
+        is usually asking exactly that.
+      security: []
+      parameters:
+        - name: seq
+          in: path
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "200":
+          description: Coverage state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CoveringResponse" }
+        "400":
+          description: seq must be a positive integer.
+          $ref: "#/components/responses/Error"
+
+  /audit/checkpoints:
+    post:
+      tags: [Audit trail]
+      summary: Pin the current chain head now
+      description: |
+        The moment a checkpoint is most valuable is immediately before an
+        export or a dispute, not the background loop's own schedule.
+        Idempotent: if the head has not moved since the last checkpoint, the
+        existing one is returned (`emitted: false`) rather than a second
+        signed statement about the same chain position — which is what makes
+        this safe to expose to any authenticated org.
+      security: [{ orgApiKey: [] }]
+      responses:
+        "200":
+          description: |
+            Either a fresh checkpoint (`emitted: true`) or the existing one
+            unchanged (`emitted: false`, empty chain or head unmoved).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmitResponse" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /audit/integrity:
+    get:
+      tags: [Audit trail]
+      summary: Verify the newest checkpoint against the log as it stands, and report the exposure
+      description: |
+        `intact` is true only if a checkpoint exists AND it still verifies
+        against the log — deliberately `false`, not absent, on a deployment
+        that has never checkpointed. `uncovered_rows` is the residual
+        exposure window expressed as a number: rows appended since the
+        checkpoint, the newest of which can be edited undetectably until the
+        next one. `anchor` carries the same three-state `AnchorState` as
+        `CheckpointResponse.external_anchor`, `null` only when there is no
+        checkpoint at all yet.
+      security: [{ orgApiKey: [] }]
+      responses:
+        "200":
+          description: Integrity verdict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntegrityResponse" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /audit/anchors/sweep:
+    post:
+      tags: [Audit trail]
+      summary: Run one external-witness anchoring pass now
+      description: |
+        `POST /audit/checkpoints`'s sibling for the anchoring half: the
+        background sweep runs on `AnchorPolicy::sweep_interval` (300s by
+        default); this runs one pass immediately. Any authenticated org may
+        call it — nothing here is tenant-scoped, and every checkpoint
+        anchored benefits every tenant, so gating "witness my evidence now"
+        behind an admin role would make it something customers ask us to do
+        rather than something they can do.
+
+        Never blocks a request path on the TSA: a provider failure for one
+        checkpoint is reported in `details` and retried on the next sweep (or
+        the next call to this endpoint), and does not fail the call.
+      security: [{ orgApiKey: [] }]
+      responses:
+        "200":
+          description: Sweep outcome.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SweepResponse" }
+        "401": { $ref: "#/components/responses/Error" }
+  /api/v1/consents:
+    post:
+      tags: [Consent]
+      summary: Record a revocable consent grant (org)
+      description: |
+        Refuses an empty `scope`, a `purpose_hash` that is not a 64-hex-char
+        SHA-256, and — mirroring `check_policy_is_bindable` — a float
+        anywhere in the body, because a float has no canonical rendering
+        Python and Rust agree on and this grant will be hashed into the
+        chain. `granted_at` defaults to the server's clock; supplying an
+        earlier one (migrating consent history from a legacy CRM or a paper
+        file) is accepted, with no lower bound, only an upper one
+        (`MAX_CLOCK_SKEW_SECONDS`, 300s) against claiming a grant that has
+        not happened yet.
+      security: [{ orgApiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateConsentBody" }
+            examples:
+              kiosk:
+                summary: Captured at a bank branch kiosk
+                value:
+                  user_id: 8f14e45f-ceea-467a-9f2a-1c1b2f3d4e5a
+                  scope: ["wealth.suitability_recommendation"]
+                  consent_version: consent-policy-2026.3
+                  granted_via: assisted_kiosk
+              non_ascii_scope:
+                summary: A non-English purpose string — the target market, not an edge case
+                value:
+                  user_id: 8f14e45f-ceea-467a-9f2a-1c1b2f3d4e5a
+                  scope: ["تقييم_الملاءمة_المالية"]
+                  consent_version: consent-policy-2026.3
+                  granted_via: mobile_app
+      responses:
+        "201":
+          description: Grant recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConsentResponse" }
+        "400":
+          description: |
+            Empty `scope`; a `scope` element that is blank, not a string, or
+            a float; a `purpose_hash` that is not a 64-hex-char digest; empty
+            `consent_version`/`granted_via`; or `granted_at` more than
+            `MAX_CLOCK_SKEW_SECONDS` in the future.
+          $ref: "#/components/responses/Error"
+        "401": { $ref: "#/components/responses/Error" }
+        "404":
+          description: No such user.
+          $ref: "#/components/responses/Error"
+    get:
+      tags: [Consent]
+      summary: One user's consent history for this org (org)
+      description: |
+        Every grant, revoked or not, newest first — not filtered to
+        unrevoked-only, because "what has this customer ever agreed to and
+        withdrawn" is the more common examiner question, and each row's
+        `revoked_at`/`revocation_reason` already answers it.
+      security: [{ orgApiKey: [] }]
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: This org's grants for the named user.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ConsentResponse" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /api/v1/consents/{id}:
+    get:
+      tags: [Consent]
+      summary: Fetch one consent grant (org)
+      security: [{ orgApiKey: [] }]
+      parameters: [{ $ref: "#/components/parameters/ConsentId" }]
+      responses:
+        "200":
+          description: The grant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConsentResponse" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404":
+          description: |
+            No such grant for this organisation. Another tenant's grant is
+            indistinguishable from one that does not exist.
+          $ref: "#/components/responses/Error"
+
+  /api/v1/consents/{id}/revoke:
+    post:
+      tags: [Consent]
+      summary: Revoke a consent grant (org)
+      description: |
+        Sets `revoked_at` exactly once; revoking an already-revoked grant is
+        a `409`, not a silent success — a second call carrying a second,
+        possibly different reason must not be swallowed into the first.
+        Decisions opened before this revocation stand: their evidence
+        answers "was consent live when this was decided", and that answer
+        does not move. The *next* decision under the same purpose is
+        refused — see the 403 on `POST /api/v1/issue-wealth-request`.
+      security: [{ orgApiKey: [] }]
+      parameters: [{ $ref: "#/components/parameters/ConsentId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RevokeConsentBody" }
+            examples:
+              english:
+                value: { revocation_reason: "the customer withdrew consent at the branch counter" }
+              french:
+                summary: Non-ASCII free text is the target market, not an edge case
+                value: { revocation_reason: "le client a retiré son consentement lors du rendez-vous en agence" }
+              arabic:
+                value: { revocation_reason: "سحب العميل موافقته أثناء زيارته لمكتب البنك" }
+      responses:
+        "200":
+          description: Revoked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConsentResponse" }
+        "400":
+          description: revocation_reason shorter than 10 characters.
+          $ref: "#/components/responses/Error"
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: |
+            Already revoked. The message names when, and (if given) why, so a
+            caller can tell "someone else already handled this" from "my own
+            retry landed twice".
+          $ref: "#/components/responses/Error"
 
   /vault:
     get:
@@ -837,6 +1149,141 @@ paths:
           description: No such assessment for this organisation.
           $ref: "#/components/responses/Error"
 
+  /api/v1/wealth-assessments/{request_id}/decision-evidence:
+    get:
+      tags: [Structured-product suitability, Audit trail]
+      summary: The sealed DecisionEvidence record for one assessment
+      security:
+        - orgApiKey: []
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      description: |
+        A second route rather than a reshaping of the one above on purpose:
+        that one is the operational view a bank's own tooling already
+        consumes; this is the sealed shape pinned to a versioned JSON Schema
+        (`schema/decision_evidence/v1.3.0.json`) that becomes immutable the
+        moment a record is sealed under it. Collapsing the two would make
+        every convenience change to the operational view a breaking change
+        to a schema that cannot break.
+
+        `binding_integrity` is computed fresh on every read, not only when
+        someone thinks to ask — a database `UPDATE` against
+        `decision_model_attestations` or `consent_grants` changes what this
+        record serves while leaving the hash chain byte-identical, and a
+        control nobody invokes by default is not a control. It covers this
+        decision's own binding events, every model correction filed against
+        it, and the consent grant it cites, if any.
+      responses:
+        "200":
+          description: The sealed record, its digest, and its binding-integrity verdict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DecisionEvidenceResponse" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404":
+          description: No such assessment for this organisation.
+          $ref: "#/components/responses/Error"
+
+  /api/v1/wealth-assessments/{request_id}/review:
+    post:
+      tags: [Structured-product suitability]
+      summary: Record a human review of one decision (org)
+      security:
+        - orgApiKey: []
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      description: |
+        The control the "bypass human review" attack had nothing to bypass
+        until this landed. `override: false` (the default) is checked, not
+        trusted: an `action` that contradicts the circuit's verdict with
+        `override: false` is refused, so a reviewer cannot quietly override
+        by leaving the flag alone. Writing a review updates the sealed
+        record's `human_review`/`decision_basis` and is itself bound to the
+        chain, so it is returned as the full `DecisionEvidenceResponse`
+        rather than a bare acknowledgement.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReviewBody" }
+      responses:
+        "201":
+          description: Review recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DecisionEvidenceResponse" }
+        "400":
+          description: |
+            Empty `reviewer_id`/`reviewer_role`; `action` not one of
+            `approved`/`rejected`/`modified`; both `review_duration_ms` and
+            `review_started_at` supplied; a negative duration; `override:
+            false` with an action that contradicts the circuit's verdict; or
+            `reviewed_at`/`review_started_at` outside the clock-skew
+            allowance.
+          $ref: "#/components/responses/Error"
+        "401": { $ref: "#/components/responses/Error" }
+        "404":
+          description: No such assessment for this organisation.
+          $ref: "#/components/responses/Error"
+        "409":
+          description: This decision already has a review on file.
+          $ref: "#/components/responses/Error"
+
+  /api/v1/wealth-assessments/{request_id}/model-corrections:
+    post:
+      tags: [Structured-product suitability]
+      summary: File a correction to a decision's model attestation (org)
+      security:
+        - orgApiKey: []
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      description: |
+        A collection, and plural in the path, on purpose: the attestation is
+        written before the decision exists, and a firm may have to contradict
+        it more than once — a first correction naming a replacement model, a
+        later one admitting the replacement cannot be stood behind either.
+        Not a `PATCH` on the assessment: this is a statement a named party
+        made at a named time, and the original attestation row is never
+        altered. Each correction is bound to the chain independently
+        (`decision_model_attestation_correction_bound`), so a later `DELETE`
+        against the correction row is detectable as `source_row_missing`
+        rather than silently reverting the record to the original
+        declaration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModelCorrectionBody" }
+      responses:
+        "201":
+          description: Correction recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelCorrectionResponse" }
+        "400":
+          description: |
+            Empty `asserted_by`/`asserted_by_role`/`correction_reason`; a
+            malformed `corrected_model` block (same rules as
+            `ai_participation` on `POST /api/v1/issue-wealth-request`); or
+            `asserted_at` outside the clock-skew allowance.
+          $ref: "#/components/responses/Error"
+        "401": { $ref: "#/components/responses/Error" }
+        "404":
+          description: No such assessment for this organisation.
+          $ref: "#/components/responses/Error"
+        "409":
+          description: Nothing to correct (no attestation exists to contradict).
+          $ref: "#/components/responses/Error"
+
   /health:
     get:
       tags: [Operations]
@@ -924,6 +1371,11 @@ components:
       required: true
       schema: { type: string, format: uuid }
     OrgId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ConsentId:
       name: id
       in: path
       required: true
@@ -1332,3 +1784,519 @@ components:
     OrgType:
       type: string
       enum: [bank, ai_platform, hospital, government]
+
+    # -------------------------------------------------------------------
+    # Consent
+    # -------------------------------------------------------------------
+
+    CreateConsentBody:
+      type: object
+      required: [user_id, scope, consent_version, granted_via]
+      properties:
+        user_id: { type: string, format: uuid }
+        scope:
+          type: array
+          minItems: 1
+          items: { type: string, minLength: 1 }
+          description: |
+            Purpose/category strings, e.g.
+            `wealth.suitability_recommendation`. Must not be empty — an empty
+            array authorises nothing, and reads as a gap rather than the
+            deliberate absence it would actually be. Every element must be a
+            non-blank string; a float here is refused (400), never silently
+            coerced or stored, because it will be hashed into the chain and a
+            float has no canonical rendering Python and Rust agree on.
+          example: ["wealth.suitability_recommendation"]
+        consent_version:
+          type: string
+          minLength: 1
+          description: The consent policy version this grant was made under — the text the customer actually saw.
+        purpose_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: |
+            The domain-separated digest of the purpose this grant covers, if
+            the capturing system computed one. Optional — the one field on
+            this record that is.
+        granted_at:
+          type: string
+          format: date-time
+          description: |
+            Defaults to the server's clock. A grant migrated from a legacy
+            CRM or a paper file may legitimately be years in the past — there
+            is no lower bound, only an upper one (grants cannot be claimed to
+            have happened in the future by more than the clock-skew
+            allowance).
+        granted_via:
+          type: string
+          minLength: 1
+          description: Which channel captured the grant, e.g. `assisted_kiosk`, `mobile_app`. Free text, not a fixed enum.
+          example: assisted_kiosk
+
+    ConsentResponse:
+      type: object
+      required: [id, org_id, user_id, scope, consent_version, granted_at, granted_via, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        scope:
+          type: array
+          items: { type: string }
+        consent_version: { type: string }
+        purpose_hash:
+          type: string
+          nullable: true
+          pattern: "^[0-9a-f]{64}$"
+        granted_at: { type: string, format: date-time }
+        granted_via: { type: string }
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        revocation_reason:
+          type: string
+          nullable: true
+          description: Always present alongside a non-null `revoked_at`, always null otherwise — never one without the other.
+        created_at: { type: string, format: date-time }
+
+    RevokeConsentBody:
+      type: object
+      required: [revocation_reason]
+      properties:
+        revocation_reason:
+          type: string
+          minLength: 10
+          description: |
+            What an examiner reads beside the grant it withdraws — say why:
+            the customer asked, a relationship ended, a regulator ordered it.
+            Free text; French and Arabic values are exercised end to end by
+            `tests/break_it/test_attack_08_consent_revocation.py`, not only
+            English.
+          example: le client a retiré son consentement lors du rendez-vous en agence
+
+    # -------------------------------------------------------------------
+    # Audit trail — checkpoints and the external witness
+    # -------------------------------------------------------------------
+
+    AnchorState:
+      description: |
+        The three cases a checkpoint's external-witness state can be in,
+        distinguished because "not yet, and that is expected" and "not yet,
+        and that is a problem" are different words for a reason. See
+        `backend/api/src/audit/anchor.rs::classify`.
+      oneOf:
+        - type: object
+          required: [status, target, reference, anchored_at]
+          properties:
+            status: { type: string, const: anchored }
+            target:
+              type: string
+              description: Which kind of witness — `rfc3161` for the production provider, `rfc3161-dev-mock` for the dev-only fabricated one.
+              example: rfc3161
+            reference:
+              type: string
+              description: A short, human-checkable locator — `sha256:<hex>` of the receipt bytes for this provider.
+            anchored_at: { type: string, format: date-time }
+          title: Anchored
+        - type: object
+          required: [status, age_seconds]
+          properties:
+            status: { type: string, const: pending }
+            age_seconds:
+              type: integer
+              description: How long this checkpoint has gone unanchored. Not itself a finding — still inside the sweep's own cadence.
+          title: Pending
+        - type: object
+          required: [status, age_seconds, note]
+          properties:
+            status: { type: string, const: overdue }
+            age_seconds: { type: integer }
+            note:
+              type: string
+              description: |
+                Plain English, IS a finding: this checkpoint has gone longer
+                than the sweep interval plus clock-skew allowance without
+                being anchored. Ask whether the anchoring job is running and
+                whether the TSA is reachable; `POST /audit/anchors/sweep`
+                runs it on demand.
+          title: Overdue
+
+    ExternalAnchor:
+      description: |
+        `AnchorState`'s fields, always present at this level (`status` plus
+        whichever fields that status carries), plus the raw witness bytes
+        when — and only when — `status` is `anchored`.
+      allOf:
+        - $ref: "#/components/schemas/AnchorState"
+        - type: object
+          properties:
+            receipt_der_base64:
+              type: string
+              description: |
+                base64 (standard) of the raw RFC 3161 `TimeStampToken` DER
+                bytes. Present only when `status` is `anchored` — an offline
+                verifier needs these to check the witness cryptographically
+                without this deployment's cooperation
+                (`scripts/bundle/verify_bundle.py` step 7c).
+
+    CheckpointResponse:
+      type: object
+      required: [checkpoint_no, head_seq, head_event_hash, covered_row_count,
+                 checkpoint_hash, kid, signed_at, chain, jws, typ, jwks_url, external_anchor]
+      properties:
+        checkpoint_no:
+          type: integer
+          format: int64
+          description: Monotonic counter, inside the signature. Anti-replay.
+        head_seq:
+          type: integer
+          format: int64
+          description: audit_log.seq of the row this checkpoint pins.
+        head_event_hash:
+          type: string
+          description: base64url-no-pad of that row's 32-byte event_hash.
+        covered_row_count:
+          type: integer
+          format: int64
+          description: Rows in audit_log with seq <= head_seq at signing time. Anti-truncation.
+        prev_checkpoint_hash:
+          type: string
+          nullable: true
+          description: base64url-no-pad SHA-256 of the previous checkpoint's compact JWS. null for the first.
+        checkpoint_hash:
+          type: string
+          description: SHA-256 over the compact JWS bytes — what the NEXT checkpoint links to.
+        kid: { type: string }
+        signed_at: { type: string, format: date-time }
+        chain:
+          type: string
+          const: memtara.audit_log.global.v1
+        jws:
+          type: string
+          description: Compact JWS (EdDSA). The evidence — everything else in this object is an index over what this says.
+        typ:
+          type: string
+          const: memtara-audit-checkpoint+jwt
+        jwks_url:
+          type: string
+          description: Where to fetch the key that verifies `jws`, so the checkpoint is self-describing when it is pasted into a ticket six months from now.
+        external_anchor: { $ref: "#/components/schemas/ExternalAnchor" }
+
+    CoveringResponse:
+      type: object
+      required: [seq, covered, note]
+      properties:
+        seq: { type: integer, format: int64 }
+        covered:
+          type: boolean
+          description: False means this row is in the residual exposure window — newer than every checkpoint.
+        checkpoint:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/CheckpointResponse" }]
+        note:
+          type: string
+          description: Plain English restatement of `covered`, because the person asking is usually asking "is this specific decision protected?".
+
+    CheckpointFailure:
+      type: object
+      required: [failure]
+      description: |
+        One way a checkpoint and the database can disagree. Which of the six
+        it is determines whether an edit, a deletion or a forged signature is
+        being looked at — three different incidents.
+      properties:
+        failure:
+          type: string
+          enum:
+            - signature_invalid
+            - columns_disagree_with_signed_payload
+            - head_row_missing
+            - head_hash_mismatch
+            - row_count_mismatch
+            - checkpoint_chain_broken
+      additionalProperties: true
+
+    CheckpointVerification:
+      type: object
+      required: [checkpoint_no, head_seq, intact, failures]
+      properties:
+        checkpoint_no: { type: integer, format: int64 }
+        head_seq: { type: integer, format: int64 }
+        intact:
+          type: boolean
+          description: True only when failures is empty.
+        failures:
+          type: array
+          items: { $ref: "#/components/schemas/CheckpointFailure" }
+
+    IntegrityResponse:
+      type: object
+      required: [intact, uncovered_rows, note]
+      properties:
+        intact:
+          type: boolean
+          description: True only if a checkpoint exists AND it verifies against the log. Deliberately false, not absent, when none exists.
+        checkpoint:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/CheckpointVerification" }]
+        uncovered_rows:
+          type: integer
+          format: int64
+          description: Rows appended since the checkpoint — the exposure, as a number.
+        note: { type: string }
+        anchor:
+          nullable: true
+          description: null only when there is no checkpoint at all yet.
+          allOf: [{ $ref: "#/components/schemas/AnchorState" }]
+
+    EmitResponse:
+      type: object
+      required: [emitted, note]
+      properties:
+        emitted:
+          type: boolean
+          description: False when the head had not moved and the existing checkpoint was returned unchanged.
+        checkpoint:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/CheckpointResponse" }]
+        note: { type: string }
+
+    SweepResponse:
+      type: object
+      required: [attempted, anchored, failed, details, note]
+      properties:
+        attempted: { type: integer, format: int64 }
+        anchored: { type: integer, format: int64 }
+        failed: { type: integer, format: int64 }
+        details:
+          type: array
+          items:
+            type: object
+            required: [checkpoint_no, result]
+            properties:
+              checkpoint_no: { type: integer, format: int64 }
+              result:
+                type: string
+                enum: [anchored, failed]
+              target: { type: string, description: Only present when result is anchored. }
+              reference: { type: string, description: Only present when result is anchored. }
+              error: { type: string, description: Only present when result is failed. }
+        note: { type: string }
+
+    # -------------------------------------------------------------------
+    # Binding replay — the third claim, and the only one that survives an
+    # UPDATE against the firm's own database. See audit/binding.rs and
+    # audit/replay.rs.
+    # -------------------------------------------------------------------
+
+    ReplayVerdict:
+      type: string
+      enum: [INTACT, ALTERED, INCOMPLETE]
+      description: |
+        Never a boolean, and INCOMPLETE is the one that matters commercially:
+        an org whose decisions all predate binding events has nothing to
+        replay, and reporting that as INTACT would hand it a clean bill of
+        health for a property it does not have. An absent check is not a
+        passed one.
+
+    ReplayResult:
+      type: string
+      enum: [intact, altered, source_row_missing, unverifiable]
+      description: |
+        Four outcomes on one event, not two. A deleted source row
+        (`source_row_missing`) and an edited one (`altered`) are different
+        incidents with different responses; `unverifiable` means the payload
+        could not be rebuilt at all — a bug in the verifier until proven
+        otherwise, not an accusation about the row.
+
+    ReplayedEvent:
+      type: object
+      required: [seq, event_type, created_at, result, recorded_event_hash, detail]
+      properties:
+        seq: { type: integer, format: int64 }
+        event_type: { type: string }
+        ref_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at: { type: string, format: date-time }
+        result: { $ref: "#/components/schemas/ReplayResult" }
+        recorded_event_hash:
+          type: string
+          description: The hash as stored.
+        recomputed_event_hash:
+          type: string
+          nullable: true
+          description: The hash the current rows produce. null when there was nothing to rebuild.
+        prev_hash:
+          type: string
+          nullable: true
+          description: The predecessor hash this event was written against, as stored — an input to the hash.
+        rebuilt_payload:
+          type: object
+          nullable: true
+          description: |
+            The rebuilt payload itself, as it stands now — the difference
+            between a verifier and a claim. If it disagrees with the recorded
+            digest, that disagreement is the finding, not hidden.
+        detail:
+          type: string
+          description: A sentence an examiner can put in a report without translating it.
+
+    ReplaySummary:
+      type: object
+      required: [binding_events, intact, altered, source_row_missing, unverifiable, out_of_scope]
+      properties:
+        binding_events: { type: integer, format: int64 }
+        intact: { type: integer, format: int64 }
+        altered: { type: integer, format: int64 }
+        source_row_missing: { type: integer, format: int64 }
+        unverifiable: { type: integer, format: int64 }
+        out_of_scope:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+          description: Event types this org's trail carries that carry no binding, and therefore were not checked — by type and count, never silently excluded.
+
+    ReplayReport:
+      type: object
+      required: [org_id, checked_at, verdict, summary, events, checks, does_not_check]
+      properties:
+        org_id: { type: string, format: uuid }
+        checked_at: { type: string, format: date-time }
+        verdict: { $ref: "#/components/schemas/ReplayVerdict" }
+        summary: { $ref: "#/components/schemas/ReplaySummary" }
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/ReplayedEvent" }
+        checks:
+          type: array
+          items: { type: string }
+          description: What this report checks, stated in the payload rather than only in a doc nobody reads at 2am.
+        does_not_check:
+          type: array
+          items: { type: string }
+          description: Chain linkage and the chain head are explicitly named here — this report is silent about both.
+
+    # -------------------------------------------------------------------
+    # Sealed decision evidence
+    # -------------------------------------------------------------------
+
+    DecisionEvidenceResponse:
+      type: object
+      required: [decision_evidence, canonical_evidence_sha256, evidence_schema]
+      properties:
+        decision_evidence:
+          type: object
+          description: |
+            The sealed record, validated against
+            `schema/decision_evidence/v1.3.0.json`. Includes
+            `decision_basis` (enum, now `proof_only` /
+            `proof_and_human_concurred` / `proof_and_human_override` — the
+            second was renamed from `proof_and_human_approved` in the 1.3.0
+            bump, because "approved" claimed a judgement the basis alone does
+            not evidence) and `data.consent` (`consent_id`, `consent_version`,
+            `scope`, `granted_at`, `purpose_hash`, each a `Provenanced<T>`:
+            `{state: "recorded", value}` when sourced from a real grant, or
+            `{state: "unpopulated", unpopulated_reason, value: null}` when the
+            grant has since been deleted — the decision's evidence still
+            stands even though its consent block degrades). Full shape left
+            to the pinned schema file rather than restated here, so this
+            document cannot itself drift from the one that is actually
+            immutable.
+        canonical_evidence_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: SHA-256 over the canonical bytes — the same value a seal's canonical_evidence_sha256 carries.
+        evidence_schema:
+          type: string
+          example: schema/decision_evidence/v1.3.0.json
+        binding_integrity:
+          description: |
+            Whether the mutable rows this record was built from still say
+            what the hash chain committed to — this decision's own binding
+            events, every model correction filed against it, and the consent
+            grant it cites, if any. Always present on a served read.
+          allOf: [{ $ref: "#/components/schemas/ReplayReport" }]
+
+    ReviewBody:
+      type: object
+      required: [reviewer_id, reviewer_role, action, human_review_protocol_version]
+      properties:
+        reviewer_id:
+          type: string
+          description: The firm's own identifier for the reviewer. Text, not a foreign key — Memtara has no directory of a bank's staff.
+        reviewer_role: { type: string }
+        action:
+          type: string
+          enum: [approved, rejected, modified]
+        human_review_protocol_version: { type: string }
+        override:
+          type: boolean
+          default: false
+          description: |
+            Whether the reviewer went against the control's verdict. Checked,
+            not trusted: `action` contradicting the proof's verdict with
+            `override: false` is refused, so a reviewer cannot quietly
+            override by leaving the flag alone.
+        override_reason:
+          type: string
+          nullable: true
+        reviewed_at:
+          type: string
+          format: date-time
+          description: When the human decided. Defaults to the server's clock, bounded by the same clock-skew allowance as `granted_at` on a consent grant.
+        review_duration_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Supply this OR review_started_at, never both — they have different provenance and a record cannot carry two.
+        review_started_at:
+          type: string
+          format: date-time
+          description: The server subtracts its own receipt time from this, so at least the end of the interval is the server's, not the caller's.
+
+    ModelCorrectionBody:
+      type: object
+      required: [asserted_by, asserted_by_role, correction_reason, corrected_model]
+      properties:
+        asserted_by:
+          type: string
+          description: The organisation's own identifier for whoever is asserting the correction. Text, not a foreign key.
+        asserted_by_role: { type: string }
+        correction_reason:
+          type: string
+          description: Why the correction is being made. Required, substantive, stored verbatim.
+        corrected_model:
+          type: object
+          description: |
+            What the organisation now says about AI participation, in the
+            same wire shape `ai_participation` uses on
+            `POST /api/v1/issue-wealth-request`. Untyped so a malformed block
+            is refused with a message naming what is wrong rather than a
+            bare 422 from axum's JSON rejection.
+        asserted_at:
+          type: string
+          format: date-time
+          description: When the organisation determined the correction. Defaults to the server's clock.
+
+    ModelCorrectionResponse:
+      type: object
+      required: [correction_id, request_id, correction_no, corrected_declaration, asserted_at, recorded_at, decision_evidence]
+      properties:
+        correction_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid }
+        correction_no:
+          type: integer
+          description: Dense from 1, per decision — a missing number is legible as a removed correction to an examiner with no database access.
+        corrected_declaration:
+          type: string
+          enum: [no_ai_participated, model_identified, participated_but_unidentified]
+        asserted_at: { type: string, format: date-time }
+        recorded_at:
+          type: string
+          format: date-time
+          description: The server's own observation of when the correction arrived, beside the caller's claim about when it was determined.
+        decision_evidence:
+          type: string
+          description: Where to read what the record now says, e.g. /api/v1/wealth-assessments/{id}/decision-evidence.

@@ -217,6 +217,17 @@ jobs:
           pytest tests/test_pdf_writer.py tests/test_evidence_exporter.py \
                  tests/test_aihoots_adapter.py -v
 
+      # docs/openapi.yaml drifted silently for as long as nobody happened to
+      # notice (consent, anchoring and three other routes were simply absent
+      # from it before this stage). This derives the real route set straight
+      # from backend/api/src/**/*.rs source and fails in both directions —
+      # an undocumented route or a documented one that does not exist — so
+      # the file cannot rot back into decoration. See the test's own module
+      # docstring for why it parses source rather than trusting a second
+      # hand-maintained list.
+      - name: OpenAPI spec matches the real router, in both directions
+        run: pytest tests/test_openapi_drift.py -v
+
       - name: Offline verification bundle
         run: pytest tests/test_bundle.py -v
 

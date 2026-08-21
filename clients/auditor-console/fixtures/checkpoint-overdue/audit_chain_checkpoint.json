@@ -1,0 +1,18 @@
+{
+  "chain": "memtara.audit_log.global.v1",
+  "checkpoint_no": 917,
+  "head_seq": 8842,
+  "head_event_hash": "PnQ2f8h5D0oV1kM3rC6bT9wX7yL4sE8aJ2nH0gK5mZ1",
+  "covered_row_count": 168,
+  "prev_checkpoint_hash": "aB3cD6eF9gH2iJ5kL8mN1oP4qR7sT0uV3wX6yZ9aB2c",
+  "checkpoint_hash": "eF9gH2iJ5kL8mN1oP4qR7sT0uV3wX6yZ9aB2cD5fG8h",
+  "kid": "6ne2eBbxA-iu8dAatLuFqjGiraLN0Sj3nGhFWQQ1EDM",
+  "signed_at": "2026-08-10T02:14:07Z",
+  "typ": "memtara-audit-checkpoint+jwt",
+  "jwks_url": "http://localhost:8080/.well-known/jwks.json",
+  "external_anchor": {
+    "status": "overdue",
+    "age_seconds": 349800,
+    "note": "this checkpoint has gone 349800s without being anchored, longer than the 300s sweep interval plus clock-skew allowance. The sweep should have reached it by now and has not — ask whether the anchoring job is running and whether the TSA is reachable (POST /audit/anchors/sweep runs it on demand)."
+  }
+}

@@ -236,6 +236,7 @@
     // the chain segment and its events silently checked for linkage they were
     // never meant to have. Two files, two claims, two roles.
     ['binding',    function (n) { return /binding.*\.jsonl$/i.test(n); }],
+    ['checkpoint', function (n) { return n === 'audit_chain_checkpoint.json'; }],
     ['chain',      function (n) { return /\.jsonl$/i.test(n); }],
     ['jwks',       function (n) { return /^jwks.*\.json$/i.test(n); }],
     ['schema',     function (n) { return /^v\d+\.\d+\.\d+\.json$/i.test(n) || /decision_evidence.*schema.*\.json$/i.test(n); }],
@@ -699,6 +700,66 @@
         checks.push(chk('seal_origin', 'Origin of the seal', NOT_CHECKED, '', '',
           'The seal carries a signature, but this tool does not know which key should have produced it and will not guess. Check it against the issuer key you independently trust.'));
       }
+    })();
+
+    /* --- 7.11b the chain-head checkpoint's external anchor --------------
+       audit/checkpoint.rs signs a checkpoint over the chain head, and
+       audit/anchor.rs (this stage) witnesses it outside the organisation
+       via RFC 3161. Both are strong claims — a JWS signature and a
+       timestamp-authority receipt — and this console deliberately does not
+       re-verify either cryptographically. That is scripts/bundle/
+       verify_bundle.py step 7c's job, in a tool that ships asn1crypto and
+       can spend the code weight a browser page should not carry for a
+       feature most auditors will see once. What this DOES do, honestly,
+       is show which of the three anchor states audit/anchor.rs::classify
+       reported — anchored / pending / overdue — since even an unverified
+       label is more than the previous stage's console showed: no anchor
+       concept existed here at all. Report the label as what the server
+       said, not as this tool's own finding. */
+    (function () {
+      var file = byRole.checkpoint;
+      if (!file) {
+        checks.push(chk('checkpoint_anchor', 'The chain-head checkpoint, and its external anchor', MISSING, '', '',
+          'Not checked: no `audit_chain_checkpoint.json` in this bundle. Without it, the newest record in audit_chain_segment.jsonl is unprotected — see 7.9\'s note above — and there is no anchor state to report at all. '
+          + 'Ask for a bundle rebuilt against a live server (scripts/bundle/build_bundle.py fetches one automatically), or GET /audit/checkpoints/covering/:seq directly.'));
+        return;
+      }
+      var cp = jsonOf(file);
+      if (!cp || cp.__parse_error) {
+        checks.push(chk('checkpoint_anchor', 'The chain-head checkpoint, and its external anchor', FAIL, '', '',
+          '`audit_chain_checkpoint.json` is present but not valid JSON: ' + (cp ? cp.__parse_error : 'empty file') + '.'));
+        return;
+      }
+      var anchor = cp.external_anchor;
+      var lines = [
+        'checkpoint_no ' + JSON.stringify(cp.checkpoint_no),
+        'head_seq      ' + JSON.stringify(cp.head_seq),
+        'signed_at     ' + JSON.stringify(cp.signed_at)
+      ];
+      if (!anchor || !anchor.status) {
+        checks.push(chk('checkpoint_anchor', 'The chain-head checkpoint, and its external anchor', MISSING,
+          '', '',
+          lines.concat(['This checkpoint carries no `external_anchor` state at all — either it predates anchoring, or the bundle was built by a builder that does not know about it.']).join('\n')));
+        return;
+      }
+      lines.push('anchor status ' + JSON.stringify(anchor.status) + '  (as reported by the server — see the note above)');
+      if (anchor.target) lines.push('anchor target ' + JSON.stringify(anchor.target));
+      if (anchor.reference) lines.push('anchor ref    ' + JSON.stringify(anchor.reference));
+      if (anchor.anchored_at) lines.push('anchored_at   ' + JSON.stringify(anchor.anchored_at));
+      var plain, notMean;
+      if (anchor.status === 'anchored') {
+        plain = 'The server reports this checkpoint was witnessed outside the organisation, and names when.';
+        notMean = 'This tool did not verify the JWS signature or the RFC 3161 receipt — it is reporting the server\'s own label, the same caution 7.11 above applies to the seal. For a cryptographic answer, use scripts/bundle/verify_bundle.py step 7c against a bundle carrying the receipt and the TSA certificate chain.';
+      } else if (anchor.status === 'overdue') {
+        plain = 'The server reports this checkpoint is overdue for anchoring — older than the sweep interval and still unwitnessed outside the organisation.';
+        notMean = 'This is the server\'s own finding, not a failure of this tool\'s making. It means the "narrows the rewrite window to the anchor cadence" guarantee is not yet in force for this checkpoint: until it is anchored, an insider with database access and the signing key has the same reach the pre-anchoring stage always had over rows this checkpoint covers.';
+      } else {
+        plain = 'The server reports this checkpoint as ' + JSON.stringify(anchor.status) + ' — younger than the sweep interval, on its way to being anchored.';
+        notMean = 'Not anchored yet is not a defect; the sweep is deliberately eventually-consistent (checkpointing must not block on a timestamp authority being reachable). Re-check after the sweep interval if this needs to be current.';
+      }
+      checks.push(chk('checkpoint_anchor', 'The chain-head checkpoint, and its external anchor',
+        anchor.status === 'anchored' ? NOT_CHECKED : (anchor.status === 'overdue' ? FAIL : NOT_CHECKED),
+        plain, notMean, lines.join('\n')));
     })();
 
     /* --- 7.12 schema ---------------------------------------------------- */
@@ -1469,7 +1530,7 @@
       // Stable order regardless of which promise settled first.
       var order = ['canonical_digest', 'pdf_digest', 'vkey_digest', 'proof_digest', 'zk_pairing',
         'public_inputs', 'outcome_binding', 'chain_linkage', 'chain_recompute',
-        'binding_recompute', 'binding_model',
+        'binding_recompute', 'binding_model', 'checkpoint_anchor',
         'jwt', 'jwt_binding', 'seal_origin', 'schema'];
       checks.sort(function (a, b) {
         var ia = order.indexOf(a.id), ib = order.indexOf(b.id);

@@ -1,0 +1,19 @@
+{
+  "chain": "memtara.audit_log.global.v1",
+  "checkpoint_no": 1034,
+  "head_seq": 10379,
+  "head_event_hash": "d4kINJpHuR5yH-MthdrnA33mkA-G2fsjWH834YiEjkE",
+  "covered_row_count": 202,
+  "prev_checkpoint_hash": "c4so9H4CzyDcF6yvHd2PLWX4Q_j7Dq1l5Fw9pEQOS5w",
+  "checkpoint_hash": "HsldaepEuby4Yz_2FKKnl6UOQVxQs6ATqhNNQYWQLaw",
+  "kid": "6ne2eBbxA-iu8dAatLuFqjGiraLN0Sj3nGhFWQQ1EDM",
+  "signed_at": "2026-08-14T09:12:12Z",
+  "typ": "memtara-audit-checkpoint+jwt",
+  "jwks_url": "http://localhost:8080/.well-known/jwks.json",
+  "external_anchor": {
+    "status": "anchored",
+    "target": "rfc3161",
+    "reference": "sha256:c7eea2cc2f5b332713537ca0c342e7bfd7041768500bdc32989a70fa15474231",
+    "anchored_at": "2026-08-14T09:12:39Z"
+  }
+}
