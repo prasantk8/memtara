@@ -1,35 +1,35 @@
 # Break-it run — findings
 
-Run: `./scripts/break_it.sh`. Eleven attacks against the real server, real
+Run: `./scripts/break_it.sh`. Twelve attacks against the real server, real
 `bb` 5.1.0, real Postgres. No mocks anywhere in the attack path.
 
-Revision 3, 20 Aug 2026. Revisions 1 and 2 are not deleted: each finding
-below carries what it said and what changed, because a findings document
-that quietly rewrites itself is worth less than one that shows where it was
-wrong. Revision 2's own header records that six of revision 1's claims were
-challenged and five of those challenges were correct; revision 3 was
-prompted by fixes rather than by errors, and adds one error of its own —
-see Finding 9.
+Revision 4, 21 Aug 2026. Revisions 1–3 are not deleted: each finding below
+carries what it said and what changed, because a findings document that
+quietly rewrites itself is worth less than one that shows where it was
+wrong. Revision 4 is the first to report **zero BLOCKED rows** — see "What
+changed in revision 4" below — and adds two findings of its own, neither in
+the attack code itself: Findings 12 and 13.
 
 ## Result
 
-    10 stopped   0 not stopped   1 blocked
+    12 stopped   0 not stopped   0 blocked
 
-Three rows moved this revision: attacks 3, 4 and 11, all of which the
-previous revision reported as real, reproduced NOT STOPPED findings. They
-moved because the defect was fixed, not because the attack was softened —
-each of those modules now FAILS if the defence is removed, and each carries
-its residual in `BREAK_IT_NOTE` where the harness prints it in the table
-rather than in prose nobody reads.
+Two rows moved this revision, both from BLOCKED to STOPPED: attack 8
+(consent did not exist to attack; it now does, and refuses) and a new
+attack 12 (the chain head had no witness outside this organisation; it now
+does). Neither moved because an existing attack was weakened — 8 is a full
+rewrite and 12 is new — and both carry their residuals in `BREAK_IT_NOTE`
+exactly as the ten before them do.
 
-**Read "10 stopped" with the residuals attached.** Three of those rows are
+**Read "12 stopped" with the residuals attached.** Five of those rows are
 detection rather than prevention, and one of them (attack 11) leaves a large
-gap that no control inside this repository can close. A table of ten green
-rows presented without them would be exactly the overclaim this exercise
-exists to catch.
+gap that no control inside this repository can close, unchanged by this
+revision. A table of twelve green rows presented without them would be
+exactly the overclaim this exercise exists to catch.
 
 A BLOCKED row is not a pass. It means the capability under attack does not
 exist, so the attack cannot be run. The harness cannot render one as a pass.
+This is the first revision with none.
 
 | # | Attack | Result |
 |---|---|---|
@@ -40,10 +40,11 @@ exist, so the attack cannot be run. The harness cannot render one as a pass.
 | 5 | Change or substitute the verification key | STOPPED |
 | 6 | Remove the proof service | STOPPED |
 | 7 | Modify the evidence record | STOPPED — with a stated residual window |
-| 8 | Revoke consent | BLOCKED — no consent concept |
+| 8 | Revoke consent | STOPPED — detected, not prevented, same shape as attack 4. See "What changed in revision 4" |
 | 9 | Attempt an unauthorised data category | STOPPED |
 | 10 | Bypass human review | STOPPED — handler *and* database |
 | 11 | Swap the model without recording it | STOPPED — with the largest residual. Finding 7 |
+| 12 | Rewrite history, from genesis, and re-sign the head | STOPPED — the rewrite passes every internal check; an external anchor, held independently, does not. See "What changed in revision 4" |
 
 ## What changed in revision 3
 
@@ -75,6 +76,62 @@ itself as tamper-evident when only one of them holds:
 
 An intact chain is not evidence of an intact record. That sentence is the
 whole of Finding 6.
+
+---
+
+## What changed in revision 4
+
+Two capabilities that did not exist before this revision, both closing a
+fact this document stated plainly about itself.
+
+**Consent** (`backend/api/migrations/0011_consent_grants.sql`,
+`backend/api/src/consents/`). Revision 3 recorded attack 8 as BLOCKED
+because `SessionPolicy.purpose_hash` — the nearest thing the backend had to
+consent — is a purpose *binding*, not a permission: no grant time, no
+subject acknowledgement, no revocation. `issue_wealth_request` now refuses
+(403) without an unrevoked grant covering the request's purpose, and
+revocation is a first-class recorded fact (`revoked_at` set exactly once,
+guarded against re-revocation) rather than a deleted row. Consent grants and
+revocations are bound the same way model attestations are — a grant-bound
+event's payload carries `revoked_at: null` explicitly, so a later revocation
+changes the payload's *bytes* rather than adding a key, the same rejection-
+symmetry argument Finding 6's fix depends on. This produces the same shape
+of residual attack 4 already carries: a direct SQL `UPDATE` against
+`consent_grants` still lands, but the binding event disagrees with it on
+every read. Decisions opened before a revocation stand, and are supposed to
+— they answer "was consent live when this was decided," not "is it live
+now."
+
+**External anchoring** (`backend/api/src/audit/anchor.rs`,
+`backend/api/migrations/0012_checkpoint_anchor_receipts.sql`). Revision 3's
+"Head" claim (the table above, under revision 3) rests entirely on a
+signature this deployment's own key produces — `audit/checkpoint.rs`'s own
+header says so: *"we can still delete our own history."* An organisation
+holding its own DB credentials and signing key can rewrite the whole log
+from genesis and re-sign a new head, and nothing internal can tell that
+statement apart from a true one. Attack 12 performs exactly that rewrite and
+asserts, explicitly, that it passes every internal check (linkage, head
+hash, row count) — that is the trap, not skipped past. What stops it: each
+checkpoint is timestamped against a third party (RFC 3161, freetsa.org in
+this deployment) before the attack runs, and the receipt is held
+independently of this database. Re-verification of the rewritten chain
+disagrees with the anchor at the exact row it pinned, and the anchor's own
+signature verifies offline against a pinned TSA root
+(`scripts/bundle/verify_bundle.py` step 7c, previously an INFO stub, is now
+a real PASS/FAIL check).
+
+**Neither claims more than it can defend.** Consent revocation is detection,
+not prevention — see attack 8's row, and Finding 12 below for the specific
+way that shows up when a *legitimate* revocation is read. Anchoring narrows
+the rewrite window from all of history to one anchoring cadence
+(`MEMTARA_AUDIT_CHECKPOINT_INTERVAL_SECONDS` / `_MAX_EVENTS`, 60s/64 events
+by default); it does not close it — rows appended and rewritten entirely
+between the last anchor and the next sweep are still forgeable, and attack
+12's own test asserts that residual rather than leaving it as prose nobody
+checks. Attack 11's silent-swap residual (an organisation that swaps a model
+and says nothing) is untouched by either capability, because nothing
+internal — with or without an external witness — can see a declaration that
+was never made.
 
 ---
 
@@ -593,3 +650,111 @@ passes, and nothing available here could tell the difference, because the
 configuration it fingerprints lives in the calling system. What it removes is
 the case where a reader cannot even tell whether recomputation was ever
 possible.
+
+## Finding 12 — a legitimate consent revocation and a tamper read the same one-word verdict
+
+Found while specifying attack 8's own assertions, not while attacking
+anything: it is a property of the design, not a bug in it, and it is
+recorded because a reader who only sees the word would draw the wrong
+conclusion.
+
+A `consent_grant_bound` event's payload carries `revoked_at` and
+`revocation_reason` explicitly, null at grant time (Finding 6's
+rejection-symmetry argument, applied here). Revocation is an `UPDATE`
+against the same row — the only kind this schema permits — so a
+*legitimate* revocation changes exactly the bytes an attacker's tamper would
+change. Recomputing the grant-bound event's payload against the row as it
+now stands disagrees with the hash recorded at grant time, in both cases,
+for the same reason: the row is no longer what it was when that event was
+written. `binding_recompute` reports ALTERED either way.
+
+What actually distinguishes them is not in that one check: the
+`consent_revocation_bound` event, recorded in the *same transaction* as the
+revoke, commits to the row's post-revocation state and recomputes clean. A
+reader who checks both events for a grant — and reads the detail line, not
+just the word — can tell "revoked, then nothing else touched it" from
+"revoked, and then something else changed it too": the first shows one
+ALTERED (the grant) paired with one INTACT (the revocation); a tamper after
+the fact would show both ALTERED, or the revocation event itself disagreeing
+with its own row. A reader who checks only one of the pair, or stops at the
+verdict word, cannot make that distinction — attack 8's test and the
+auditor console's `consent-revocation-altered` fixture both exist to make
+this pairing visible rather than leave it as a caveat in this paragraph.
+
+This is not a defect to fix; there is no row shape that would let a
+legitimate revocation and a malicious one produce different single-event
+verdicts, short of storing history the chain already provides a stronger
+version of. It is recorded so nobody mistakes a routine revocation's ALTERED
+grant-bound row for a finding on its own.
+
+## Finding 13 — three workstreams landed clean; every caller outside their own tests did not
+
+Found by the coordinator, not by any of the three workstreams that produced
+it, which is the point of having one: each workstream's own tests passed,
+`cargo test` was green, and `scripts/break_it.sh` reported 12/0/0 — and the
+system was still broken for every consumer of `issue_wealth_request` that
+existed before consent did.
+
+Workstream A's `require_covering_grant` is correct and was landed with its
+own coverage: `tests/break_it/conftest.py`'s `make_desk` was updated to
+grant consent, so every break-it attack kept working. Nothing else in the
+repository shares that fixture. `tests/test_wealth_suitability_e2e.py`'s
+`desk` fixture (25 test failures), `tests/test_prover_cli.py`'s `desk`
+fixture, `tests/test_evidence_exporter.py`'s live-integration test,
+`clients/web-prover/test/seed.mjs` (workstream D's own e2e harness, written
+concurrently with A and merged before A's enforcement was visible to it),
+and `scripts/demo_cro_workflow.py` — the script `quickstart.sh` runs
+end-to-end as this project's primary onboarding demo — all opened
+assessments with no consent grant in sight, and all started returning 403
+the moment A's migration landed. None of it showed up in any single
+workstream's own verification, because none of those five call sites is
+owned by workstream A, and workstream A's own definition of done correctly
+listed *its* tests, not the whole repository's.
+
+**The fix was mechanical once found**: each of the five now grants a
+consent covering `wealth.suitability_recommendation` before opening an
+assessment, the same shape `make_desk` already established. The finding
+worth keeping is procedural, not technical: parallel workstreams that each
+verify their own slice, however thoroughly, do not verify integration by
+construction. Something has to run every caller that exists — not just the
+callers a given workstream thought to update — after every workstream lands
+and before any of it ships. That is now item 2 of the stage's coordinator
+protocol, and this finding is the reason it is there rather than an
+assumption.
+
+## Finding 14 — a real database race, not a multi-engineer artifact
+
+Found by the coordinator running `cargo test --all` alone, after every
+concurrent workstream had already finished — which rules out the
+first, easiest explanation.
+
+`checkpoint.rs`'s db tests hold one uncommitted transaction for their entire
+duration specifically so that `pg_advisory_xact_lock` — taken by every audit
+append, `backend/api/src/audit/mod.rs::append_locked` — stays held for the
+whole test, and no concurrently-running test can append or delete
+`audit_log` rows underneath a checkpoint the test just signed. Two new tests
+in `audit/anchor.rs` (`a_dead_tsa_does_not_stop_checkpointing_or_crash_the_sweep`,
+`a_successful_anchor_is_persisted_and_reported_as_anchored`) could not use
+that trick — `sweep_once` reads the checkpoint through a different pool
+connection, so the checkpoint had to be committed for real — and committing
+released the lock partway through the test, leaving the window between that
+commit and the test's own final re-verification unprotected. Under `cargo
+test`'s default parallelism (the same invocation `.github/workflows/ci.yml`
+uses), that window was long enough for another test's append to land inside
+it: `RowCountMismatch { signed: 175, observed: 171 }`, reproduced with zero
+other engineers or processes touching the database.
+
+Worth stating plainly: this was not the shared-dev-database noise three
+engineers running concurrently in one session would produce and might be
+tempted to write off as such — both A's and B's own workstream reports
+initially read it that way, since it stopped reproducing by their third
+`break_it.sh` run. It reproduced again, alone, under plain `cargo test
+--all`, which means it would have reproduced in CI, intermittently, forever.
+
+**Fixed** by giving those two tests the same guarantee the others get for
+free, by a different route: a session-level `pg_advisory_lock` on one
+dedicated connection, taken before the first append and released after the
+last read, reentrant on that session so `emit_in_tx`'s own
+transaction-scoped lock call does not block against it. Confirmed with three
+consecutive clean `cargo test --all` runs after the fix, where one run had
+been enough to reproduce the failure before it.
